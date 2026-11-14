@@ -1,0 +1,25 @@
+# Gradle / Android Studio
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/.kotlin/
+*.iml
+*.apk
+*.aab
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+# debug-mode config created by scripts/dev.sh
+config.dev.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# WorkBuddy 本地会话/记忆数据
+.workbuddy/

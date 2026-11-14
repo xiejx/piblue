@@ -1,0 +1,10 @@
+# BLE GATT server on top of BlueZ.
+#
+# Pin to the 0.3.x line on purpose:
+#   0.2.x talked to D-Bus through twisted + txdbus, and txdbus breaks on
+#   python 3.11 (it still calls inspect.getargspec, removed in 3.11). Every
+#   Raspberry Pi OS since Bookworm ships python 3.11+, so 0.2.x is a dead end.
+#   0.3.x uses dbus-next, which is pure python and asyncio-native.
+#
+# Linux only pulls dbus-next; the windows extras are marker-gated and skipped.
+bless>=0.3.0

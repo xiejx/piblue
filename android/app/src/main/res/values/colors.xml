@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#FFF7FAF6</color>
+    <color name="card">#FFFFFFFF</color>
+    <color name="stroke">#FFE3E9E1</color>
+    <color name="divider">#FFE3E9E1</color>
+
+    <color name="text_primary">#FF1B1F1B</color>
+    <color name="text_secondary">#FF5C665B</color>
+
+    <color name="accent">#FF2E7D32</color>
+    <color name="accent_light">#FFE4F2E3</color>
+    <color name="accent_dark">#FF1B5E20</color>
+
+    <color name="danger">#FFC62828</color>
+    <color name="warn_now">#FFEF6C00</color>
+    <color name="warn_bg">#FFFDECEA</color>
+
+    <color name="terminal_bg">#FFF1F4F0</color>
+    <color name="dot_off">#FF9E9E9E</color>
+    <color name="dot_wait">#FFF9A825</color>
+    <color name="dot_on">#FF2E7D32</color>
+    <color name="dot_err">#FFC62828</color>
+</resources>

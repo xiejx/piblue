@@ -1,0 +1,26 @@
+{
+  "ble": {
+    "name": "PiBlue",
+    "adapter": ""
+  },
+  "agent": {
+    "log_level": "INFO",
+    "min_interval_s": 1.0,
+    "max_interval_s": 60.0
+  },
+  "shell": {
+    "enabled": true,
+    "allow_any": false,
+    "allow_meta": false,
+    "timeout_s": 10,
+    "max_output_bytes": 8192
+  },
+  "sensors": {
+    "onewire": true,
+    "dht": [],
+    "custom": []
+  },
+  "disk": {
+    "path": "/"
+  }
+}

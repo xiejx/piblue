@@ -1,0 +1,19 @@
+[Unit]
+Description=PiBlue - BLE agent for phone control
+Documentation=file:/opt/piblue/README.md
+After=bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+# Root is required: BlueZ only allows the advertising API to privileged users.
+User=root
+WorkingDirectory=/opt/piblue
+Environment=PYTHONUNBUFFERED=1
+Environment=PIBLUE_CONFIG=/etc/piblue/config.json
+ExecStart=/opt/piblue/venv/bin/python -m agent.main
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
