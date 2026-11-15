@@ -97,12 +97,17 @@ git tag v1.3.4
 git push origin v1.3.4
 ```
 
-流程：`ubuntu-latest` runner → Temurin JDK 17 → Android SDK Platform 34 + Build-Tools 34.0.0 → `./gradlew assembleDebug` → 校验 APK 的 `versionName` 与 tag 一致 → 改名 `PiBlue-1.3.4-debug.apk`、算 SHA256 → 传到 Release 附件，同时留一份 workflow artifact（保留 90 天）。
+流程：`ubuntu-latest` runner → Temurin JDK 17 → Android SDK Platform 34 + Build-Tools 34.0.0 → `./gradlew assembleDebug` → 校验 APK 的 `versionName` 与 tag 一致 → 改名 `PiBlue-1.3.4-debug.apk`、算 SHA256 → 传到 Release 附件，同时留一份 workflow artifact（保留 30 天）。
+
+Android SDK 用的是 **runner 镜像自带的那份**（`ANDROID_HOME` 已经指好，`sdkmanager` 也在），只补装 Platform 34 和 Build-Tools 34.0.0。没有用 `android-actions/setup-android`——它会先自己再下一份 cmdline-tools，多一层失败点，1.3.3 首次尝试就是挂在那一步。如果哪天 runner 镜像变了、找不到 `ANDROID_HOME` 或 `sdkmanager`，那一步会直接报一条 `::error::` 注解说明缺什么。
 
 两点必须注意：
 
 * **tag 要和 `versionName` 对上**。CI 会用 `aapt dump badging` 读包里的版本号，和 tag 不一致就直接失败——宁可不出包，也别发出一个标题写 A、装上去是 B 的包。
 * **`versionCode` 每次都要 +1**，否则手机上覆盖安装会失败（同一个 versionCode 装不进去）。`versionName` 是给人看的，`versionCode` 是给系统比的。
+* **tag 一旦推上去、Release 建出来了，就别再改它**。`git tag -f` + 强推会让线上多出一个版本号相同的包，用户分不清该下哪个。要修就发新版本号。
+
+构建失败时不用翻日志：Gradle 输出的最后 30 行会以注解（annotation）形式贴在 run 页面顶部，`sdkmanager` 装依赖失败也一样。
 
 `workflow_dispatch` 也能手动跑（仓库 Actions 页 → Build APK → Run workflow），手动跑只出 artifact、不建 Release。
 
