@@ -366,10 +366,19 @@ class PiController(context: Context) {
      * The action name *is* the vocabulary: the Pi validates every field
      * (`ssid`, `device`, `index`) against its own lists, so nothing sent from
      * here can turn into a shell line.
+     *
+     * @param announce let [Listener.onActionDone] surface the one-line result.
+     *   Callers that render the payload themselves (a custom command's output)
+     *   pass false so the user is not told twice.
+     * @param onData receives the whole `data` object. A reboot button only needs
+     *   the sentence in `message`; a custom command also answers with stdout,
+     *   stderr and an exit code, and those are the interesting part.
      */
     fun runAction(
         action: String,
         timeoutMs: Long = 25_000,
+        announce: Boolean = true,
+        onData: ((JSONObject) -> Unit)? = null,
         fields: JSONObject.() -> Unit = {},
     ) {
         if (!isConnected) {
@@ -384,7 +393,8 @@ class PiController(context: Context) {
             }.optJSONObject("data") ?: JSONObject()
             val message = data.optString("message").ifBlank { "已执行 $action" }
             addLine(message, LineKind.Note)
-            listener?.onActionDone(message, true)
+            onData?.invoke(data)
+            if (announce) listener?.onActionDone(message, true)
             // Asking for a snapshot right after "reboot" would only produce a
             // timeout toast: the link is about to go away on purpose.
             if (action !in CONFIRM_ACTIONS) refreshControl()

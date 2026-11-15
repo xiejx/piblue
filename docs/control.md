@@ -52,6 +52,19 @@
 
 保存时用**执行时的同一套规则**做预检，写不进去的命令当场拒绝，不会等到你点按钮才报错。这些命令以 root 执行，**不受 `shell.allowed` 白名单限制**；`shell.deny` 里的 `rm`/`dd`/`mkfs` 等仍然拒绝。管道和重定向由 `control.custom_allow_meta`（默认 `true`）控制 —— 自定义命令是你自己写一次的固定操作，和手写在配置里等价；不想放开就改成 `false`。`control.allow_custom_edit = false` 可以让 App 只能执行、不能改。
 
+### 执行结果
+
+点命令名 → 确认 → 执行，之后 App 弹一个结果对话框（1.3.3 起）：
+
+* 标题就是这个命令的结果：`完成` / `退出码 127` / `超时`；
+* 内容依次是执行的命令行、**stdout**（正常色）、**stderr**（红色），都等宽且可选中；
+* 底部一行退出码与耗时，输出被 `shell.max_output_bytes` 截断时会额外注明；
+* 「复制」把命令行 + 输出 + 退出码一起放进剪贴板，方便贴到别处搜报错；复制不会关掉对话框。
+
+这些内容树莓派本来就随 `custom` 动作一起返回（`stdout` / `stderr` / `code` / `timed_out` / `duration_ms`，与 `exec` 回包同构），以前 App 只取了那句 `message` 就丢掉了。
+
+注意命令**没有分配 TTY**：`htop`、`top`、`vim` 这类交互式程序拿不到终端（会报 `not a tty` 或 `Error opening terminal`）。要看进程用 `ps aux --sort=-%cpu`，看日志用 `journalctl -n 50 --no-pager`。
+
 ---
 
 ## Wi-Fi

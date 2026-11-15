@@ -2,6 +2,8 @@ package com.raspi.piblue
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Bundle
@@ -28,6 +30,8 @@ import com.raspi.piblue.ble.BleClient
 import com.raspi.piblue.data.ControlStatus
 import com.raspi.piblue.data.CustomAction
 import com.raspi.piblue.data.DiskEntry
+import com.raspi.piblue.data.ExecResult
+import com.raspi.piblue.data.Json
 import com.raspi.piblue.data.Pairing
 import com.raspi.piblue.data.SensorMeta
 import com.raspi.piblue.data.SensorReading
@@ -38,6 +42,7 @@ import com.raspi.piblue.ui.formatNumber
 import com.raspi.piblue.ui.formatPct
 import com.raspi.piblue.ui.formatTemp
 import com.raspi.piblue.ui.formatUptime
+import org.json.JSONObject
 import java.util.Locale
 
 class MainActivity : Activity(), PiController.Listener {
@@ -1160,8 +1165,123 @@ class MainActivity : Activity(), PiController.Listener {
     private fun confirmRunCustom(item: CustomAction) {
         val detail = if (item.line.isBlank()) "" else "\n\n\$ ${item.line}"
         confirmAction("执行「${item.name}」", "会在树莓派上执行：$detail", "执行") {
-            controller.runAction("custom", 45_000) { put("index", item.index) }
+            // announce = false: the output dialog below says more than a toast
+            // ever could, and two "done" notices for one tap is noise.
+            controller.runAction(
+                "custom",
+                45_000,
+                announce = false,
+                onData = { data -> showCustomResult(item, data) },
+            ) { put("index", item.index) }
         }
+    }
+
+    /**
+     * Show what a custom command printed.
+     *
+     * The Pi answers a `custom` action with stdout, stderr, the exit code and
+     * the duration - the same shape as `exec`. A one-line toast ("nginx：完成")
+     * throws all of that away, which is the opposite of what someone tapping a
+     * command wants to see. Everything is monospace and selectable, because the
+     * usual next step is pasting the error into a search box.
+     */
+    private fun showCustomResult(item: CustomAction, data: JSONObject) {
+        if (isFinishing) return
+        val result = Json.exec(data)
+
+        val title = when {
+            result.timedOut -> "${item.name} · 超时"
+            result.code == 0 -> "${item.name} · 完成"
+            else -> "${item.name} · 退出码 ${result.code}"
+        }
+
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(10), dp(20), 0)
+        }
+        box.addView(monoBlock("\$ ${item.line}", R.color.text_secondary))
+
+        if (result.stdout.isNotBlank()) {
+            box.addView(monoBlock(tidy(result.stdout), R.color.text_primary))
+        }
+        if (result.stderr.isNotBlank()) {
+            box.addView(monoBlock(tidy(result.stderr), R.color.danger))
+        }
+        if (result.stdout.isBlank() && result.stderr.isBlank()) {
+            box.addView(monoBlock("(无输出)", R.color.text_secondary))
+        }
+
+        val footer = buildString {
+            if (result.timedOut) {
+                append("命令超时，已在树莓派端终止")
+            } else {
+                append("退出码 ").append(result.code)
+            }
+            if (result.durationMs > 0) append(" · ").append(result.durationMs).append(" ms")
+            if (result.truncated) append(" · 输出过长已截断")
+        }
+        box.addView(monoBlock(footer, R.color.text_secondary).apply {
+            textSize = 11f
+            setPadding(0, dp(8), 0, dp(4))
+        })
+
+        val scroll = ScrollView(this).apply { addView(box) }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(scroll)
+            .setPositiveButton("关闭", null)
+            .setNeutralButton("复制", null)
+            .create()
+
+        // The neutral button is re-wired so that copying does not dismiss the
+        // dialog - the default click handler closes it, and the output that was
+        // just copied is what the user is still looking at.
+        dialog.setOnShowListener {
+            // Cap the height so an 8 KB output does not become a full-screen
+            // sheet; past that the ScrollView scrolls instead.
+            val max = (resources.displayMetrics.heightPixels * 0.55f).toInt()
+            if (scroll.height > max) {
+                scroll.layoutParams = scroll.layoutParams.apply { height = max }
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                copyCustomResult(item, result)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun copyCustomResult(item: CustomAction, result: ExecResult) {
+        val text = buildString {
+            append("\$ ").append(item.line)
+            if (result.stdout.isNotBlank()) append("\n\n").append(tidy(result.stdout))
+            if (result.stderr.isNotBlank()) append("\n\n[stderr]\n").append(tidy(result.stderr))
+            if (result.stdout.isBlank() && result.stderr.isBlank()) append("\n\n(无输出)")
+            append("\n\n退出码 ").append(result.code)
+            if (result.durationMs > 0) append(" · ").append(result.durationMs).append(" ms")
+        }
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("PiBlue 命令输出", text))
+        Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Strip the line ending a command leaves behind.
+     *
+     * The Pi returns `\n`, but a command that prints a file authored on Windows
+     * brings `\r\n` along, and a stray `\r` renders as a box in the dialog.
+     */
+    private fun tidy(text: String): String = text.replace("\r\n", "\n").trimEnd('\n')
+
+    /** Monospace, selectable text block for command output. */
+    private fun monoBlock(text: String, colorRes: Int): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 12f
+        typeface = Typeface.MONOSPACE
+        setTextColor(ContextCompat.getColor(this@MainActivity, colorRes))
+        setTextIsSelectable(true)
+        setLineSpacing(dp(3).toFloat(), 1f)
+        setPadding(0, dp(6), 0, 0)
     }
 
     /**
