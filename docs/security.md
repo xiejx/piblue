@@ -51,7 +51,7 @@ link down: 7C:2A:31:5E:10:04
 建议：
 
 * 只在自家网络环境用；不要把 `allow_any` 打开后长期开着服务。
-* 手机丢了或配对码泄露：`sudo piblue-token new` 换一个，所有手机都要重填。
+* 手机丢了或配对码泄露：`sudo piblue-token new` 换一个，**再 `sudo systemctl restart piblue`**（码在进程启动时读进内存，不重启新码不生效），然后所有手机都要重填。
 * 不想暴露设备时：`sudo systemctl stop piblue`，比改名字可靠。
 
 ## 控制页为什么更安全

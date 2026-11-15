@@ -100,6 +100,25 @@ sudo /opt/piblue/venv/bin/python -m agent.token show
 
 `set` 的规则：base32 字符（A–Z 加 2–7，**没有 0/1/8/9**），去掉横线空格后至少 12 位（60 bit）。少于 16 位会提示一句，但仍然可用；不想背就用 `new` 随机生成。
 
+#### `new` / `set` 之后必须重启服务
+
+```bash
+sudo piblue-token new
+sudo systemctl restart piblue     # 少了这行，新码等于没生效
+```
+
+原因在启动路径上：`AuthGate` 构造时就把 `/etc/piblue/token` 读进内存并算好 HMAC key（`agent/auth.py` 的 `read_token()` + `derived_key()`），而它随 `Agent` 在进程启动时创建一次，之后不再重读。代码里也没有 SIGHUP 钩子，systemd 单元没有 `ExecReload`，所以 `systemctl reload` 不可用，只能 `restart`。
+
+**只改文件不重启**的表现：服务仍按**旧码**校验。手机上填 `new` 打印出来的新码 → `wrong pairing code`；手机上留着旧码反而能过。这个"反直觉"最容易让人以为是蓝牙有问题。
+
+重启后**所有手机都要重填新码**。App 把码存在自己的 SharedPreferences（`piblue.settings` → `pairing_code`），不会因为树莓派换了码而自动更新；找不到重填入口就清除 App 数据。
+
+#### 换了码却完全没反应，看这里
+
+`read_token()` 的优先级是 **`config.json` 的 `auth.token` → 环境变量 `PIBLUE_TOKEN` → token 文件**。如果你在配置里手填过 `"token": "..."`，那 `piblue-token new` 写文件根本不生效，重启也没用。
+
+判断方法：`new` 之后再跑一次 `show`。**如果 `show` 打印的还是老码**，就是配置里那个值在生效 —— 删掉 `auth.token`（或把它清成空串），重启服务。默认的 `config.example.json` 里是 `"token": ""`，所以只有手动填过才会中招。
+
 用 `dev.sh` 调试时是**另一套码**，不碰 `/etc`，文件在代码目录里，启动时也会打在 `[dev] pairing ...` 那行：
 
 ```bash
@@ -110,6 +129,8 @@ sudo rm ~/pi-agent/.dev-token                        # 删掉，下次启动自�
 ```
 
 所以同一个 App 在两种模式下要填不同的码：对外面跑着的服务填 `/etc/piblue/token`，对 `dev.sh` 填 `.dev-token`。分不清时看 App 终端里那行 `配对通过 · agent x.y.z` 有没有出现。
+
+`dev.sh token new` / `set` 同样要重启才生效 —— 那个进程就是 agent 本身，`Ctrl-C` 再 `sudo ./scripts/dev.sh` 一次即可。
 
 ### 装完自检
 

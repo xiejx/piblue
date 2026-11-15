@@ -50,9 +50,12 @@ sudo ./scripts/install.sh
 装完会打印一个**配对码**（形如 `ABCD-EFGH-JKLM-NPQR`），手机第一次连接时填一次。忘了随时查：
 
 ```bash
-sudo piblue-token            # 看当前配对码
-sudo piblue-token new        # 换一个（所有手机都要重填）
+sudo piblue-token             # 看当前配对码
+sudo piblue-token new         # 换一个（所有手机都要重填）
+sudo systemctl restart piblue # 换完必须重启，否则服务仍用旧码
 ```
+
+`new` / `set` 只改 `/etc/piblue/token`，而配对码是在进程启动时读进内存的，不重启新码不生效 —— 细节见 [docs/agent-install.md](docs/agent-install.md#new--set-之后必须重启服务)。
 
 最后自检，全绿就说明树莓派已经在广播 `PiBlue` 了：
 

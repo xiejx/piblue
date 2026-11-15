@@ -18,6 +18,7 @@ sudo ./scripts/doctor.sh
 | 扫到但连不上 / 立刻断开 | 关掉手机蓝牙再打开（清 GATT 缓存）；确认没有别的手机还连着；看 `journalctl -u piblue -f` 有无报错 |
 | 连上后一直空白 | 服务 UUID 不匹配 —— 确认树莓派跑的是这个版本的 agent；nRF Connect 能否看到 `6e400001` 服务 |
 | **状态栏显示"已连接（未配对）"，命令一律没反应** | 配对码没填或填错。App 会自己弹出输入框；也可以断开重连，在扫描窗口的输入框里重填。树莓派侧日志：`wrong pairing code, N attempt(s) left`→ 码不对；`too many wrong codes` → 被锁 60 秒，等一会儿；`this Pi has no pairing code yet` → `/etc/piblue/token` 不存在，跑一次 `install.sh` 或 `sudo /opt/piblue/venv/bin/python -m agent.token new` |
+| **换了配对码（`piblue-token new`）之后手机连不上** | 九成是没重启：码在进程启动时读进内存，只改文件不重启，服务仍按旧码校验，手机上填新码必然 `wrong pairing code`。`sudo systemctl restart piblue` 后重填。仍不行再看两条：① 手机上存的还是旧码（App 的 SharedPreferences，重启 App 也不清），要重新输入或清除 App 数据；② `sudo piblue-token show` 打印的若不是你刚 `new` 出来的码，说明 `config.json` 的 `auth.token` 手填过值，它的优先级高于 token 文件，删掉再重启 |
 | 树莓派日志刷 `bluez reports the central is gone` | 正常：每次断开都会让会话作废，手机重连后会自己重新认证一次 |
 | 中文乱码 | 不该出现：手机端按字节累积、遇到换行才 UTF-8 解码。若出现，检查是否有人改了 `BleClient.emitFrames` 的分片逻辑 |
 
