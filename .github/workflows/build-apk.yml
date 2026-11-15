@@ -12,6 +12,9 @@ permissions:
 
 env:
   APK_DIR: android/app/build/outputs/apk/debug
+  ANDROID_PLATFORM: platforms;android-34
+  BUILD_TOOLS: build-tools;34.0.0
+  BUILD_TOOLS_VERSION: 34.0.0
 
 jobs:
   build:
@@ -23,34 +26,85 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
+      # ubuntu-latest 镜像自带 Android SDK，ANDROID_HOME 已经指好，这里只补装
+      # 项目需要的 platform 与 build-tools。
+      #
+      # 刻意不用 android-actions/setup-android —— 它会先自己下一份 cmdline-tools，
+      # 多出一层失败点（本仓库第一次跑就是挂在那一步）。镜像里的 sdkmanager
+      # 已经在，直接调用即可。
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install platform 34
+        id: sdk
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
+          set -euo pipefail
+
+          root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [ -z "$root" ]; then
+            echo "::error::ANDROID_HOME is not set on this runner image"
+            exit 1
+          fi
+          if [ ! -d "$root" ]; then
+            echo "::error::ANDROID_HOME=$root does not exist"
+            exit 1
+          fi
+          echo "ANDROID_HOME=$root" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$root" >> "$GITHUB_ENV"
+
+          sdkmanager_bin="$(command -v sdkmanager || true)"
+          if [ -z "$sdkmanager_bin" ]; then
+            sdkmanager_bin="$(find "$root" -maxdepth 5 -name sdkmanager -type f 2>/dev/null | head -1)"
+          fi
+          if [ -z "$sdkmanager_bin" ]; then
+            echo "::error::sdkmanager not found under $root"
+            exit 1
+          fi
+          echo "using $sdkmanager_bin"
+
+          yes | "$sdkmanager_bin" --licenses > /dev/null 2>&1 || true
+          if ! "$sdkmanager_bin" --install "$ANDROID_PLATFORM" "$BUILD_TOOLS" > /tmp/sdk-install.log 2>&1; then
+            tail -20 /tmp/sdk-install.log | while IFS= read -r line; do
+              echo "::error::sdkmanager: ${line//%/%25}"
+            done
+            exit 1
+          fi
+          ls "$root/platforms" "$root/build-tools"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --console=plain --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon --console=plain --stacktrace 2>&1 | tee /tmp/build.log
+
+      # 失败时把 Gradle 的最后几十行贴成注解，省得为了看原因去翻日志。
+      - name: Report build failure
+        if: failure()
+        run: |
+          if [ -f /tmp/build.log ]; then
+            grep -v '^\s*$' /tmp/build.log | tail -30 | while IFS= read -r line; do
+              echo "::error::${line//%/%25}"
+            done
+          fi
+          exit 0
 
       # 包名和版本号对不上就别发，宁可失败也不要发出标题和内容不一致的包。
       - name: Check APK version against the tag
         id: meta
         run: |
           set -euo pipefail
-          AAPT="$ANDROID_SDK_ROOT/build-tools/34.0.0/aapt"
+          root="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          AAPT="$root/build-tools/$BUILD_TOOLS_VERSION/aapt"
+          if [ ! -x "$AAPT" ]; then
+            AAPT="$(find "$root/build-tools" -maxdepth 2 -name aapt -type f | sort | tail -1)"
+          fi
           APK="$APK_DIR/app-debug.apk"
-          test -f "$APK" || { echo "no APK at $APK" >&2; exit 1; }
+          test -f "$APK" || { echo "::error::no APK at $APK"; exit 1; }
 
           badging="$("$AAPT" dump badging "$APK" | head -1)"
           code="$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<<"$badging")"
@@ -60,8 +114,7 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             tag="${GITHUB_REF_NAME#v}"
             if [[ "$tag" != "$name" ]]; then
-              echo "::error::tag $GITHUB_REF_NAME does not match versionName $name" \
-                   "(bump versionName in android/app/build.gradle.kts)"
+              echo "::error::tag $GITHUB_REF_NAME does not match versionName $name (bump versionName in android/app/build.gradle.kts)"
               exit 1
             fi
             out="PiBlue-$tag-debug.apk"
@@ -97,9 +150,11 @@ jobs:
           generate_release_notes: true
           body: |
             自动构建的调试包，可直接安装：
+
             ```bash
             adb install -r ${{ steps.meta.outputs.apk }}
             ```
 
             versionCode ${{ steps.meta.outputs.version_code }} ·
             versionName ${{ steps.meta.outputs.version }} · 校验值见 `.sha256` 文件。
+            完整安装说明见仓库 README。
