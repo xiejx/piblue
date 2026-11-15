@@ -19,6 +19,14 @@
   "shell": {
     "enabled": true,
     "allow_any": false,
+    "allowed": [
+      "ls", "cat", "head", "tail", "df", "free", "uptime", "uname", "date",
+      "whoami", "id", "ps", "du", "wc", "grep", "find", "ip", "ss", "ping",
+      "vcgencmd", "systemctl", "journalctl", "iwgetid", "sensors",
+      "i2cdetect", "gpio", "python3", "sh", "hostname", "echo", "printf",
+      "pwd", "stat", "mount", "lsblk", "who", "dmesg", "cut", "sort"
+    ],
+    "deny": ["rm", "rmdir", "dd", "mkfs", "shred", "wipefs", "fdisk", "parted"],
     "allow_meta": false,
     "timeout_s": 10,
     "max_output_bytes": 8192

@@ -166,10 +166,23 @@ sudo ./scripts/doctor.sh
 * `ble.adapter` 留空 = 让 bless 自己选第一个适配器（板载蓝牙就是这个）。只有插了 USB 蓝牙棒、想指定它时才填 `hci1`；填错会报 `Could not locate bluetooth adapter`。
 * `ble.name` 改成别的名字，App 里就按新名字找（`BleClient.nameHint` 同步改，或直接靠服务 UUID 匹配，也能找到）。
 * `auth.enabled = false` 等于谁连上都能跑命令，只在完全私人的实验环境里关；`auth.token` 留空是为了让密钥待在 `/etc/piblue/token`（0600），而不是待在会被人复制走的配置文件里。
+* `shell.allowed` 是**终端页能跑哪些命令的白名单**。只比可执行文件的 basename（`sudo` / `env` / `nice` 会被剥掉再看真正要跑的程序），默认 39 条：`ls`、`cat`、`df`、`free`、`uptime`、`vcgencmd`、`systemctl`、`journalctl`、`ps`、`ip` … 完整列表见 `pi-agent/config.example.json` 的 `shell.allowed`，或代码里的 `agent/config.py` → `DEFAULT_CONFIG`。
+  **这是整表替换，不是追加**：配置里一旦出现 `allowed`，就完全取代默认列表。所以要加 `htop`，得把原有的一起写全（最省事的做法是从 `/etc/piblue/config.json` 现有内容上改，别只写一条）。
+* `shell.deny` 是黑名单，**永远优先**：`allow_any = true` 时也照样拒绝。默认拦 `rm`、`rmdir`、`dd`、`mkfs`、`shred`、`wipefs`、`fdisk`、`parted`。
 * `shell.allow_any = true` 等于把 root shell 交给手机，只在完全私人的环境里开。
 * `shell.allow_meta = false` 会拦 `; | & > < $ \``，所以 `ps aux | grep x` 默认跑不了。想放开就改 `true`。
 * `control.allow` 是**控制页的按钮清单**：删掉一行，App 里那个按钮就消失。比如不想让任何人远程关机，把 `"shutdown"` 去掉即可 —— 注意这是唯一的地方，没有第二个隐藏开关。
 * `sensors` / `disk` 的用法见下面的传感器扩展。控制页相关字段（`mount_root`、`custom*`）见 [control.md](control.md)。
+
+### 三种"命令"配置，别搞混
+
+| 想做的事 | 改哪个键 | 存在哪 |
+| --- | --- | --- |
+| 终端页里允许输入哪些命令 | `shell.allowed`（白名单）、`shell.deny`（黑名单）、`shell.allow_any`、`shell.allow_meta` | `config.json` |
+| 控制页上多一个按钮、点一下执行某条命令（最多 5 条） | `control.custom` 只是**首次种子**；App 保存后以 `custom.json` 为准 | `/etc/piblue/custom.json`（和 config.json 同目录） |
+| 传感器卡片读一个自定义脚本 | `sensors.custom`（`id`/`name`/`type`/`unit`/`cmd`） | `config.json` |
+
+改完都要 `sudo systemctl restart piblue` 才生效（`dev.sh` 模式改 `config.dev.json` 后 Ctrl-C 重跑）。细节分别见 [control.md](control.md) 和 [security.md](security.md)。
 
 ### 传感器扩展（不用改代码）
 

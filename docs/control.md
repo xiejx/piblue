@@ -48,6 +48,8 @@
 { "items": [ { "name": "重启 nginx", "line": "systemctl restart nginx" } ] }
 ```
 
+想手写也可以，注意三点：`name` 最多 40 字符、`line` 最多 500、总共不超过 5 条。**`custom.json` 是每次执行/刷新状态时读的，改完不用重启服务**；而 `config.json` 里的 `control.custom` 只在启动时加载，改它得 `sudo systemctl restart piblue`。
+
 保存时用**执行时的同一套规则**做预检，写不进去的命令当场拒绝，不会等到你点按钮才报错。这些命令以 root 执行，**不受 `shell.allowed` 白名单限制**；`shell.deny` 里的 `rm`/`dd`/`mkfs` 等仍然拒绝。管道和重定向由 `control.custom_allow_meta`（默认 `true`）控制 —— 自定义命令是你自己写一次的固定操作，和手写在配置里等价；不想放开就改成 `false`。`control.allow_custom_edit = false` 可以让 App 只能执行、不能改。
 
 ---
