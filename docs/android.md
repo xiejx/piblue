@@ -153,6 +153,14 @@ App 只在第一次点"扫描并连接"时申请。
 
 控制页的按钮由 `control` 的 `status` 驱动，所以**树莓派上增减动作不需要重装 App**，最坏情况只是新动作没有中文标签（会按动作名显示）。控制页能做什么见 [control.md](control.md)。
 
+四页的样子（`docs/images/` 下的四张，数据是示例读数）：
+
+| 状态 | 传感器 | 控制 | 终端 |
+| --- | --- | --- | --- |
+| <img src="images/app-status.png" width="176" alt="状态页"> | <img src="images/app-sensors.png" width="176" alt="传感器页"> | <img src="images/app-control.png" width="176" alt="控制页"> | <img src="images/app-terminal.png" width="176" alt="终端页"> |
+
+要换成自己机器的截图，手机连上树莓派后直接 `adb exec-out screencap -p > app-status.png` 覆盖同名文件即可，版式不用动。
+
 ---
 
 ## 代码在哪

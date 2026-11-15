@@ -18,6 +18,12 @@
 * **不需要公网**，不经过任何服务器，手机直连树莓派。
 * 手机端装好就是四个页面：状态、传感器、控制、终端。
 
+| 状态 | 传感器 | 控制 | 终端 |
+| --- | --- | --- | --- |
+| <img src="docs/images/app-status.png" width="176" alt="状态页：温度、负载、内存、磁盘、时间、设备信息"> | <img src="docs/images/app-sensors.png" width="176" alt="传感器页：SoC 温度、DS18B20、DHT22、自定义"> | <img src="docs/images/app-control.png" width="176" alt="控制页：电源、服务、Wi-Fi、磁盘、自定义命令"> | <img src="docs/images/app-terminal.png" width="176" alt="终端页：快捷 chip 与命令输出"> |
+
+图里的数据是示例（Pi 4 + 一个 DS18B20 / DHT22），版式与文案按 app 真实布局渲染。
+
 ---
 
 ## 快速开始
