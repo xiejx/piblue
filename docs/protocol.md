@@ -56,7 +56,7 @@
 主动推送（无 `id`，用 `event` 区分）：
 
 ```json
-{"event": "summary", "data": {"cpu_temp_c": 48.2, "load1": 0.14, "mem_used_pct": 23.1, "uptime_s": 91234, "ts": 1760000000.12}}
+{"event": "summary", "data": {"cpu_temp_c": 48.2, "load1": 0.14, "mem_used_pct": 23.1, "uptime_s": 91234, "time": {"epoch": 1760000000.12, "local": "2026-11-15 09:57:03", "tz": "CST", "utc_offset": "+0800", "synced": true}, "ts": 1760000000.12}}
 ```
 
 ## 认证
@@ -73,7 +73,7 @@ GATT 服务是公开的：BLE 广播挡不住任何人连上来（能挡住的�
 
 // 2. 树莓派（challenge 每次握手都不同）
 {"id": 1, "ok": true, "data": {
-  "name": "PiBlue", "version": "1.1.0", "hostname": "raspberrypi", "commands": ["..."],
+  "name": "PiBlue", "version": "1.3.0", "hostname": "raspberrypi", "commands": ["..."],
   "auth": {"required": true, "algo": "hmac-sha256",
            "challenge": "9f2c…32 hex…", "session_s": 300}
 }}
@@ -103,10 +103,11 @@ GATT 服务是公开的：BLE 广播挡不住任何人连上来（能挡住的�
 | `auth` | `mac`（HMAC-SHA256 十六进制） | `authorized`, `session_s` |
 | `ping` | — | `pong`, `t` |
 | `info` | — | 完整系统快照，见下 |
-| `summary` | — | 精简快照 `cpu_temp_c` / `load1` / `mem_used_pct` / `uptime_s` |
+| `summary` | — | 精简快照 `cpu_temp_c` / `load1` / `mem_used_pct` / `uptime_s` / `time` |
 | `sensors` | `read=true` 则同时读取全部 | `sensors[]` |
 | `sensor` | `sensor=<id>` | 单个读数 |
 | `exec` | `line`, 可选 `timeout`（秒） | `stdout`, `stderr`, `code`, `timed_out`, `truncated`, `duration_ms` |
+| `control` | `action`，其余参数按动作而定 | 每个动作都带 `message`（可直接展示的文案），见下 |
 | `sub` | `topic=summary`, `every`（秒） | `topic`, `every` |
 | `unsub` | `topic` | `topic`, `stopped` |
 | `help` | — | 命令说明 |
@@ -128,11 +129,15 @@ GATT 服务是公开的：BLE 广播挡不住任何人连上来（能挡住的�
   "net": {"iface": "wlan0", "ipv4": "192.168.1.42"},
   "wifi": {"ssid": "home", "signal": 58},
   "throttled": {"raw": "0x0", "flags": [], "ok": true},
+  "time": {"epoch": 1760000000.12, "local": "2026-11-15 09:57:03",
+           "tz": "CST", "utc_offset": "+0800", "zone": "Asia/Shanghai", "synced": true},
   "ts": 1760000000.12
 }
 ```
 
 字段都可能为 `null`（比如没插 Wi-Fi、没有 `vcgencmd`），手机端要按可空处理。
+
+`time` 同时给**格式化字符串**和 `epoch`，不是冗余：`local` 是树莓派自己时区下的读数，手机要是拿 `epoch` 按本地时区重排，就正好把"树莓派差了几个时区"这件事抹掉了。`synced` 来自 `timedatectl show -p NTPSynchronized`（没有这个工具时为 `null`）；RTC 和网络都没有的树莓派会停在 1970 年，那是 TLS 和 apt 各种诡异报错的源头，状态页会把它标出来。`summary` 推送里也带同一个 `time` 对象，所以订阅开着时时间会跟着刷新。
 
 ### 传感器读数
 
@@ -149,6 +154,58 @@ GATT 服务是公开的：BLE 广播挡不住任何人连上来（能挡住的�
 ```
 
 读取失败时带 `error` 字段而不是 `value`。
+
+## 控制（`control`）
+
+手机端不发送命令行，只发送**动作名**加少量数据。动作表在树莓派上是固定的，不在表里的动作根本不存在：
+
+| action | 参数 | 作用 |
+| --- | --- | --- |
+| `status` | — | 控制页的一次性快照：可用动作、Wi-Fi 状态、磁盘列表、自定义命令 |
+| `reboot` | `confirm=true`，可选 `delay_s` | `systemctl --no-block reboot` |
+| `shutdown` | `confirm=true`，可选 `delay_s` | `systemctl --no-block poweroff` |
+| `restart-agent` | 可选 `delay_s` | 重启 `piblue.service`（用 `systemd-run --on-active` 排在自身 cgroup 之外，否则还没回包就被自己杀了） |
+| `restart-bluetooth` | 可选 `delay_s` | 重启 `bluetooth.service` + `piblue.service`（只重启前者会留下失效的 D-Bus 注册，反而更扫不到） |
+| `wifi-enable` / `wifi-disable` | — | `nmcli radio wifi on/off`，另用 `rfkill` 兜底。打开时还会执行 `nmcli device connect <iface>`：光把 radio 打开不会恢复连接，NetworkManager 会给"手动断开"过的设备打标记，autoconnect 一直被压着 |
+| `wifi-scan` | — | 强制重扫，返回 `networks[]`（`ssid` / `signal` / `security` / `saved`） |
+| `wifi-connect` | `ssid`，可选 `password` | 树莓派已有该 SSID 的 profile 且没给密码 → 直接激活，用存档里的密码；否则显式写一份带 `key-mgmt` 的 profile 再激活（不是 `nmcli dev wifi connect`）。没有 nmcli 时走 `wpa_cli` |
+| `wifi-disconnect` | — | 断开当前网络 |
+| `disk-list` | — | `lsblk -J` 的可挂载分区 |
+| `disk-mount` | `device`（必须来自 `disk-list`），可选 `name`、`read_only` | 挂到 `control.mount_root/<name>`；`name` 会被校验成**单个路径段**（字母数字开头，`[A-Za-z0-9._-]{0,31}`），目录不存在则 `mkdir -p`，已存在且非空则拒绝。不带 `name` 时退回用 label 当目录名。**NTFS 显式用 `mount -t ntfs3`**（`ntfs`/`ntfs3`/`fuseblk` 都算），内核没有 ntfs3 时自动退回不带 `-t` 的探测（即 ntfs-3g）；其他文件系统一律不指定 `-t` |
+| `disk-unmount` | `device` | 只允许卸载 `mount_root` 下的挂载，以及**可移动设备**的挂载（桌面自动挂到 `/media/pi/…` 的 U 盘也能安全弹出）；`/`、`/boot`、`/usr` 等关键挂载点一律拒绝 |
+| `custom` | `index`（0-4） | 触发第 index 条命令，正文在树莓派上 |
+| `custom-save` | `items: [{"name","line"}]`（≤5） | **整表替换**，写入 `custom.json`（与 `config.json` 同目录，原子写、0644）。保存前用执行时的同一套规则预检，写不进去的命令当场拒绝 |
+
+`status` 返回：
+
+```json
+{
+  "enabled": true,
+  "actions": ["reboot", "shutdown", "restart-agent", "wifi-scan", "disk-mount", "custom", "custom-save"],
+  "wifi": {"available": true, "backend": "nmcli", "iface": "wlan0",
+           "enabled": true, "ssid": "home", "signal": -48, "state": "connected",
+           "saved": ["home", "office"]},
+  "disks": [{"path": "/dev/sda1", "name": "sda1", "size": 31000000000,
+             "fstype": "exfat", "label": "USB", "mountpoint": null,
+             "can_unmount": false, "removable": true, "tran": "usb", "model": "USB DISK"}],
+  "custom": [{"index": 0, "name": "重启 nginx", "line": "systemctl restart nginx"}],
+  "custom_max": 5,
+  "custom_path": "/etc/piblue/custom.json",
+  "mount_root": "/mnt",
+  "root": true,
+  "errors": {"disk": null, "custom": null}
+}
+```
+
+`custom` 里的 `line` 会一起下发，因为手机现在也要能编辑它 —— 命令正文不再只存在于树莓派。`custom.json` 存在时以它为准，`config.json` 的 `control.custom` 只是首次保存前的种子。`actions` 里出现 `custom-save` 才表示这台树莓派允许手机改这份列表（`control.allow_custom_edit`，默认跟 `custom` 一起开）。
+
+`wifi.saved` 只列 SSID，永远不含密码——它回答的是"树莓派记得哪些网络"，不是"密码是什么"。App 用它在列表里标「已保存」，并在没有扫描结果时把不在范围内的已保存网络也列出来（照着这个点就能连回去）。
+
+`actions` 已经是**过滤后**的结果：配置里没开（`control.allow`）、或这台机器没装对应工具（没有 `nmcli`/`wpa_cli`、没有 `lsblk`）的动作不会出现。App 只画这个列表里的按钮，所以不会出现“点了必然失败”的按钮。
+
+为什么不让手机发命令行：`exec` 的路径上，一条 `sh -c '…'` 就能绕过白名单；这里文件名、挂载点、SSID 全部由树莓派侧校验后才进 `argv`，且**永远不经过 shell**（`create_subprocess_exec`）。手机能给的最坏输入是一个不存在的 SSID。
+
+唯一的例外是 `custom-save`：它确实让手机写入要执行的命令。这是刻意的 —— 控制页的价值就是把常用操作做成按钮，而按钮背后必然得有一行命令。边界是：① 只有通过配对码鉴权的手机能调（所有 `control` 动作都在鉴权之后）；② 上限 5 条、单行、最长 500 字符，保存前用执行时的同一套规则预检；③ `shell.deny` 仍然生效，`rm`/`dd`/`mkfs` 保存不进去；④ 想彻底关掉就设 `control.allow_custom_edit = false`，那样手机只能按序号执行 `config.json` 里手写的条目。
 
 ## 手工联调
 

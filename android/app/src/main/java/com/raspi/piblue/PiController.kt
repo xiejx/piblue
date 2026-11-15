@@ -3,11 +3,14 @@ package com.raspi.piblue
 import android.content.Context
 import com.raspi.piblue.ble.BleClient
 import com.raspi.piblue.ble.BleTimeout
+import com.raspi.piblue.data.ControlJson
+import com.raspi.piblue.data.ControlStatus
 import com.raspi.piblue.data.Json
 import com.raspi.piblue.data.Pairing
 import com.raspi.piblue.data.SensorMeta
 import com.raspi.piblue.data.SensorReading
 import com.raspi.piblue.data.SysInfo
+import com.raspi.piblue.data.WifiNetwork
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
@@ -48,6 +52,9 @@ class PiController(context: Context) {
 
         /** The Pi wants a pairing code before it will answer anything. */
         fun onAuthRequired(message: String) {}
+
+        /** A control action finished; `ok` says whether it worked. */
+        fun onActionDone(message: String, ok: Boolean) {}
     }
 
     var listener: Listener? = null
@@ -67,6 +74,14 @@ class PiController(context: Context) {
     var terminal: List<TermLine> = emptyList()
         private set
     var hits: List<BleClient.Hit> = emptyList()
+        private set
+
+    /** What the control page may offer, straight from the Pi's config. */
+    var control: ControlStatus? = null
+        private set
+    var wifiNetworks: List<WifiNetwork> = emptyList()
+        private set
+    var wifiScanning: Boolean = false
         private set
 
     /** False while connected but not yet past the pairing gate. */
@@ -100,6 +115,9 @@ class PiController(context: Context) {
     private var lastMtu: Int = 23
     private val authMutex = Mutex()
 
+    /** Actions the Pi refuses unless the phone confirms it meant them. */
+    private val CONFIRM_ACTIONS = setOf("reboot", "shutdown")
+
     init {
         scope.launch {
             ble.state.collect { incoming ->
@@ -119,6 +137,7 @@ class PiController(context: Context) {
                             if (handshake(incoming.mtu)) {
                                 refreshInfo()
                                 refreshSensors()
+                                refreshControl()
                                 if (autoRefresh) startSubscription()
                             }
                         }
@@ -169,6 +188,9 @@ class PiController(context: Context) {
         info = null
         readings = emptyMap()
         sensors = emptyList()
+        control = null
+        wifiNetworks = emptyList()
+        wifiScanning = false
         authorized = false
         peerHostname = null
         lastMtu = 23
@@ -180,6 +202,8 @@ class PiController(context: Context) {
         stopSubscription()
         ble.disconnect()
         authorized = false
+        control = null
+        wifiNetworks = emptyList()
         addLine("已断开连接", LineKind.Note)
         notifyChanged()
     }
@@ -281,6 +305,7 @@ class PiController(context: Context) {
             if (handshake(lastMtu)) {
                 refreshInfo()
                 refreshSensors()
+                refreshControl()
                 if (autoRefresh) startSubscription()
             }
         }
@@ -322,8 +347,116 @@ class PiController(context: Context) {
         }
     }
 
-    fun setAutoRefresh(enabled: Boolean) {
-        autoRefresh = enabled
+    // ---------------------------------------------------------------- control
+
+    /** Snapshot for the control page: allowed actions, Wi-Fi state, disks. */
+    fun refreshControl() {
+        if (!isConnected || !authorized) return
+        launchSafe {
+            val data = call("control", 25_000) { put("action", "status") }.optJSONObject("data")
+                ?: return@launchSafe
+            control = ControlJson.status(data)
+            notifyChanged()
+        }
+    }
+
+    /**
+     * Fire one control action.
+     *
+     * The action name *is* the vocabulary: the Pi validates every field
+     * (`ssid`, `device`, `index`) against its own lists, so nothing sent from
+     * here can turn into a shell line.
+     */
+    fun runAction(
+        action: String,
+        timeoutMs: Long = 25_000,
+        fields: JSONObject.() -> Unit = {},
+    ) {
+        if (!isConnected) {
+            listener?.onActionDone("未连接", false)
+            return
+        }
+        launchSafe {
+            val data = call("control", timeoutMs) {
+                put("action", action)
+                if (action in CONFIRM_ACTIONS) put("confirm", true)
+                fields()
+            }.optJSONObject("data") ?: JSONObject()
+            val message = data.optString("message").ifBlank { "已执行 $action" }
+            addLine(message, LineKind.Note)
+            listener?.onActionDone(message, true)
+            // Asking for a snapshot right after "reboot" would only produce a
+            // timeout toast: the link is about to go away on purpose.
+            if (action !in CONFIRM_ACTIONS) refreshControl()
+        }
+    }
+
+    fun connectWifi(ssid: String, password: String) {
+        runAction("wifi-connect", 70_000) {
+            put("ssid", ssid)
+            if (password.isNotEmpty()) put("password", password)
+        }
+    }
+
+    /**
+     * Mount [device] under the user's own directory name.
+     *
+     * Only the directory name travels, never a path: the Pi joins it to its own
+     * `control.mount_root` and validates it as a single component, so nothing
+     * here can point at /etc.
+     */
+    fun mountDisk(device: String, name: String, readOnly: Boolean = false) {
+        runAction("disk-mount", 40_000) {
+            put("device", device)
+            put("name", name)
+            if (readOnly) put("read_only", true)
+        }
+    }
+
+    /** Replace the Pi's list with exactly [items], in the order drawn on screen. */
+    fun saveCustomCommands(items: List<Pair<String, String>>) {
+        runAction("custom-save", 40_000) {
+            put(
+                "items",
+                JSONArray().apply {
+                    items.forEach { (name, line) ->
+                        put(
+                            JSONObject().apply {
+                                put("name", name)
+                                put("line", line)
+                            }
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    /** Slow enough (5-20 s) to need its own progress state in the UI. */
+    fun scanWifi() {
+        if (!isConnected || wifiScanning) return
+        wifiScanning = true
+        notifyChanged()
+        scope.launch {
+            try {
+                val data = call("control", 60_000) { put("action", "wifi-scan") }
+                    .optJSONObject("data")
+                wifiNetworks = if (data == null) emptyList() else ControlJson.networks(data)
+                listener?.onActionDone("扫描到 ${wifiNetworks.size} 个网络", true)
+            } catch (t: TimeoutCancellationException) {
+                fail("扫描超时：树莓派可能正在重启网卡，稍后再试")
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                fail(friendly(t))
+            } finally {
+                wifiScanning = false
+                notifyChanged()
+            }
+        }
+    }
+
+    fun setAutoRefresh(enabled: Boolean) {        autoRefresh = enabled
         if (!isConnected) return
         if (enabled) startSubscription() else stopSubscription()
     }
@@ -424,11 +557,15 @@ class PiController(context: Context) {
                 }
                 val mem = base.mem
 
+                val clockObj = data.optJSONObject("time")
                 info = base.copy(
                     cpuTempC = temp ?: base.cpuTempC,
                     load1 = data.optDouble("load1", base.load1),
                     uptimeS = data.optLong("uptime_s", base.uptimeS),
                     mem = if (mem != null && memPct != null) mem.copy(usedPct = memPct) else mem,
+                    // The push repeats every ~2 s, so the clock tile ticks
+                    // without asking the Pi for a full snapshot.
+                    clock = clockObj?.let { Json.piClock(it) } ?: base.clock,
                 )
                 notifyChanged()
             }

@@ -23,6 +23,30 @@
     "timeout_s": 10,
     "max_output_bytes": 8192
   },
+  "control": {
+    "enabled": true,
+    "allow": [
+      "reboot",
+      "shutdown",
+      "restart-agent",
+      "restart-bluetooth",
+      "wifi-enable",
+      "wifi-disable",
+      "wifi-scan",
+      "wifi-connect",
+      "wifi-disconnect",
+      "disk-list",
+      "disk-mount",
+      "disk-unmount",
+      "custom",
+      "custom-save"
+    ],
+    "mount_root": "/mnt",
+    "custom": [],
+    "custom_timeout_s": 20,
+    "allow_custom_edit": true,
+    "custom_allow_meta": true
+  },
   "sensors": {
     "onewire": true,
     "dht": [],

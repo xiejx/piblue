@@ -67,6 +67,45 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "timeout_s": 10,
         "max_output_bytes": 8192,
     },
+    "control": {
+        # The control page in the app is generated from this section: an action
+        # that is not listed here has no button at all. Deleting a line is the
+        # way to take the button away - there is no hidden second list.
+        "enabled": True,
+        "allow": [
+            "reboot",
+            "shutdown",
+            "restart-agent",
+            "restart-bluetooth",
+            "wifi-enable",
+            "wifi-disable",
+            "wifi-scan",
+            "wifi-connect",
+            "wifi-disconnect",
+            "disk-list",
+            "disk-mount",
+            "disk-unmount",
+            "custom",
+            "custom-save",
+        ],
+        # Mounted devices land here, one directory per mount, named by the user
+        # on the phone (/mnt/<name>). A mount point outside this directory is
+        # only unmountable when the device is removable, which is what keeps /
+        # and /boot out of reach.
+        "mount_root": "/mnt",
+        # Up to five one-line commands. The app edits them and the Pi keeps them
+        # in custom.json next to this file; `custom` below is only the seed used
+        # until the first save. The shell deny list still applies.
+        "custom": [],
+        "custom_timeout_s": 20,
+        # Let the phone add/remove those commands. False makes control.custom
+        # read-only (hand-edited in this file only).
+        "allow_custom_edit": True,
+        # Pipes and redirects are allowed inside a custom command, the same way
+        # they would be in a command written here by hand. The deny list (rm,
+        # dd, mkfs...) still refuses the destructive ones.
+        "custom_allow_meta": True,
+    },
     "sensors": {
         # Extra sensors on top of the auto-detected ones.
         # Each entry: {"id": "custom:foo", "name": "Foo", "type": "value",

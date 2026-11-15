@@ -13,12 +13,12 @@ import time
 from typing import Any, Awaitable, Callable
 
 from .auth import AuthGate, AuthRejected
-from .handlers import sensors, shell, sysinfo
+from .handlers import control, sensors, shell, sysinfo
 from .protocol import LineDecoder
 
 logger = logging.getLogger("piblue.agent")
 
-VERSION = "1.1.0"
+VERSION = "1.3.1"
 
 #: Answered before the phone has proved it knows the pairing code. ``ping`` is
 #: in the list so a client can check that the link is alive while it is still
@@ -52,6 +52,7 @@ class Agent:
             "sensors": self._cmd_sensors,
             "sensor": self._cmd_sensor,
             "exec": self._cmd_exec,
+            "control": self._cmd_control,
             "sub": self._cmd_sub,
             "unsub": self._cmd_unsub,
             "help": self._cmd_help,
@@ -114,7 +115,7 @@ class Agent:
         logger.info("<- id=%s cmd=%s", mid, cmd or "<empty>")
         try:
             data = await handler(msg)
-        except (shell.ShellRejected,) as exc:
+        except (shell.ShellRejected, control.ControlRejected) as exc:
             await self._reply(mid, False, error=exc.message)
         except AuthRejected as exc:
             await self._reply(mid, False, error=exc.message, code="unauthorized")
@@ -190,6 +191,9 @@ class Agent:
     async def _cmd_exec(self, msg: dict[str, Any]) -> dict[str, Any]:
         return await shell.exec_line(msg, self.config)
 
+    async def _cmd_control(self, msg: dict[str, Any]) -> dict[str, Any]:
+        return await control.run(msg, self.config)
+
     async def _cmd_sub(self, msg: dict[str, Any]) -> dict[str, Any]:
         topic = str(msg.get("topic") or "")
         if topic != "summary":
@@ -221,6 +225,7 @@ class Agent:
                 "sensors": "列出可用传感器；带 read=true 读取全部",
                 "sensor": "读取单个传感器，参数 sensor",
                 "exec": "执行命令，参数 line（可带 timeout）",
+                "control": "控制动作，参数 action（status/reboot/wifi-scan/disk-mount…）",
                 "sub": "订阅推送，参数 topic=summary, every=秒",
                 "unsub": "取消订阅，参数 topic",
             }

@@ -11,8 +11,8 @@ android {
         applicationId = "com.raspi.piblue"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 6
+        versionName = "1.3.1"
     }
 
     buildTypes {

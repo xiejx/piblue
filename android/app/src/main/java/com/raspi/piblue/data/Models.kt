@@ -41,7 +41,26 @@ data class SysInfo(
     val net: Net?,
     val wifi: Wifi?,
     val throttled: Throttled?,
+    /** The Pi's own clock, formatted in the Pi's timezone (not the phone's). */
+    val clock: PiClock? = null,
 )
+
+data class PiClock(
+    val epochMs: Long,
+    /** "2026-11-15 09:57:03" as the Pi would print it. */
+    val local: String?,
+    val tz: String?,
+    val utcOffset: String?,
+    val zone: String?,
+    /** null means the Pi could not tell (no timedatectl). */
+    val synced: Boolean?,
+) {
+    /** Seconds the Pi differs from this phone, or null if we cannot tell. */
+    fun skewSeconds(): Long? {
+        if (epochMs <= 0L) return null
+        return (epochMs - System.currentTimeMillis()) / 1000L
+    }
+}
 
 data class SensorMeta(val id: String, val name: String, val type: String, val unit: String)
 
@@ -82,6 +101,7 @@ object Json {
         val netObj = data.optJSONObject("net")
         val wifiObj = data.optJSONObject("wifi")
         val thrObj = data.optJSONObject("throttled")
+        val clockObj = data.optJSONObject("time")
         val loadArr = data.optJSONArray("load")
 
         fun loadAt(index: Int): Double =
@@ -123,10 +143,21 @@ object Json {
                     ok = t.optBoolean("ok", true),
                 )
             },
+            clock = clockObj?.let { piClock(it) },
         )
     }
 
     private fun numOf(o: JSONObject, key: String): Double? = o.num(key)
+
+    /** Also used for the 2 s `summary` push, which carries the same object. */
+    fun piClock(o: JSONObject): PiClock = PiClock(
+        epochMs = (o.optDouble("epoch", 0.0) * 1000.0).toLong(),
+        local = o.str("local"),
+        tz = o.str("tz"),
+        utcOffset = o.str("utc_offset"),
+        zone = o.str("zone"),
+        synced = if (o.has("synced") && !o.isNull("synced")) o.optBoolean("synced") else null,
+    )
 
     fun sensors(data: JSONObject): List<SensorMeta> {
         val arr = data.optJSONArray("sensors") ?: return emptyList()

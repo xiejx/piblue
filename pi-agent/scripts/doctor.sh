@@ -99,6 +99,29 @@ elif [[ -x "$PY" ]]; then
   note "fix: sudo $PY -m agent.token new"
 fi
 
+# Control page: the buttons are generated from these tools. Missing ones do not
+# break anything, they just make the matching card disappear.
+echo
+echo "control page:"
+if command -v nmcli >/dev/null; then
+  ok "wifi backend: nmcli"
+elif command -v wpa_cli >/dev/null; then
+  ok "wifi backend: wpa_cli (no nmcli)"
+else
+  bad "no nmcli and no wpa_cli - the Wi-Fi card will be hidden"
+fi
+for tool in lsblk mount umount rfkill systemd-run; do
+  if command -v "$tool" >/dev/null; then
+    ok "$tool present"
+  else
+    bad "$tool missing - some control actions will be refused"
+  fi
+done
+if command -v lsblk >/dev/null; then
+  n=$(lsblk -J -b -o NAME,TYPE,FSTYPE 2>/dev/null | grep -c '"fstype"')
+  note "$n block device(s) with a filesystem"
+fi
+
 echo
 echo "recent agent log:"
 journalctl -u piblue -n 8 --no-pager 2>/dev/null | sed 's/^/  /' || note "no journal access"

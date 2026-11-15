@@ -16,6 +16,9 @@ __pycache__/
 venv/
 # debug-mode config created by scripts/dev.sh
 config.dev.json
+# custom commands the app saved (production copy lives in /etc/piblue)
+pi-agent/custom.json
+pi-agent/custom.json.tmp
 # dev-mode pairing code (the production one lives in /etc/piblue/token)
 .dev-token
 

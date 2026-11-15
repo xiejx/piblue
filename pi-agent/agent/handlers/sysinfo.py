@@ -211,6 +211,39 @@ def model() -> str | None:
     return None
 
 
+def clock() -> dict[str, Any]:
+    """The Pi's wall clock, in the Pi's own timezone.
+
+    Both a formatted string and an epoch go over the wire on purpose: the phone
+    may sit in another timezone, and reformatting the epoch with the phone's
+    zone would hide exactly the offset the user is looking for ("is the Pi an
+    hour behind?", "did NTP ever reach it?").
+    """
+    now = time.time()
+    local = time.localtime(now)
+    return {
+        "epoch": round(now, 3),
+        "local": time.strftime("%Y-%m-%d %H:%M:%S", local),
+        "tz": time.strftime("%Z", local) or "",
+        "utc_offset": time.strftime("%z", local) or "",
+        "zone": (_read("/etc/timezone") or "").strip() or None,
+        "synced": _clock_synced(),
+    }
+
+
+def _clock_synced() -> bool | None:
+    """``timedatectl`` says whether NTP has actually set the clock.
+
+    A Pi without a network and without an RTC boots to a 1970-ish date, and the
+    status page is the one place that would show it. ``None`` when the tool is
+    missing (dev machines, non-systemd images).
+    """
+    out = _run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
+    if out is None:
+        return None
+    return out.strip().lower() == "yes"
+
+
 def snapshot(config: dict[str, Any]) -> dict[str, Any]:
     """Everything the status screen needs, in one round trip."""
     net = primary_ipv4()
@@ -228,6 +261,7 @@ def snapshot(config: dict[str, Any]) -> dict[str, Any]:
         "net": net,
         "wifi": wifi(),
         "throttled": throttled(),
+        "time": clock(),
         "ts": round(time.time(), 3),
     }
 
@@ -240,5 +274,6 @@ def summary(config: dict[str, Any]) -> dict[str, Any]:
         "load1": (snap["load"] or [0.0])[0],
         "mem_used_pct": (snap["mem"] or {}).get("used_pct"),
         "uptime_s": snap["uptime_s"],
+        "time": snap["time"],
         "ts": snap["ts"],
     }
