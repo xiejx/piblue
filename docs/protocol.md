@@ -15,6 +15,10 @@
 
 这是 Nordic UART Service 的布局，选择它是因为手机端 GATT 调试工具（nRF Connect）默认就认识这套 UUID，手工联调很方便。
 
+## 为什么是 GATT 而不是 SPP
+
+经典蓝牙串口（SPP）依赖 BlueZ 的废弃兼容模式（`bluetoothd -C`）+ `rfcomm` 绑定，近几版 Raspberry Pi OS 上越来越容易翻车；GATT 是 BlueZ 官方支持的路径，手机端也不用走"配对"流程，连上就能用。代价是两端都要自己按 MTU 分片：手机侧在 `BleClient.kt`，树莓派侧在 `BleTransport.send` —— **BlueZ 不会替你切 notify，超长的一条直接丢**，这一点踩过坑，见 [troubleshooting.md](troubleshooting.md#链路上通了但命令超时)。
+
 ## 分片与重组
 
 * **写入**：一次 GATT write 最多 `MTU - 3` 字节。手机端把整行按此切块，逐块发送，**必须等上一块的 write 回调再发下一块**（Android 的 GATT 同时只允许一个未完成操作）。树莓派端按 `\n` 重组，收到换行才解析。
