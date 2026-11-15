@@ -71,12 +71,40 @@ else
   cp "$SRC/config.example.json" "$CFG_DIR/config.json"
 fi
 
+# The pairing code gates the command layer: without it anyone in radio range
+# could run shell commands. Generated once, never overwritten by a reinstall -
+# rotating it would silently lock out a phone that already knows the old one.
+log "preparing the pairing code"
+PAIR_CODE="$(cd "$APP_DIR" && "$APP_DIR/venv/bin/python" - "$CFG_DIR/token" <<'PY'
+import sys
+from agent.token import ensure_token, pretty
+
+token, created = ensure_token(sys.argv[1])
+print(pretty(token), file=sys.stdout)
+print("new" if created else "kept", file=sys.stderr)
+PY
+)"
+
 log "installing systemd unit"
 install -m 0644 "$SRC/systemd/piblue.service" "$UNIT"
 systemctl daemon-reload
 systemctl enable piblue.service >/dev/null
 systemctl restart piblue.service
 sleep 2
+
+# The only thing you need after setup is the code, and nobody remembers
+# "sudo /opt/piblue/venv/bin/python -m agent.token show". Short name, same tool.
+log "installing the piblue-token helper"
+cat > /usr/local/bin/piblue-token <<'SH'
+#!/bin/sh
+# Show or change the PiBlue pairing code. Needs root: /etc/piblue/token is 0600.
+#   sudo piblue-token                 show the code in use
+#   sudo piblue-token set MYPI-HOME-PASS-KLMN    pick your own
+#   sudo piblue-token new             roll a random one
+cd /opt/piblue || exit 1
+exec ./venv/bin/python -m agent.token "$@"
+SH
+chmod 0755 /usr/local/bin/piblue-token
 
 if systemctl is-active --quiet piblue.service; then
   log "agent is running"
@@ -92,6 +120,11 @@ p = pathlib.Path("/etc/piblue/config.json")
 print(json.loads(p.read_text()).get("ble", {}).get("name", "PiBlue") if p.exists() else "PiBlue")
 PY
 )'"
+echo "    pairing code:  $PAIR_CODE"
+echo "    (enter it once in the app when it asks; it never travels over BLE)"
+echo "    show again:    sudo piblue-token"
+echo "    pick your own: sudo piblue-token set MYPI-HOME-PASS-KLMN"
+echo "    rotate:        sudo piblue-token new"
 echo "    logs:     journalctl -u piblue -f"
 echo "    restart:  sudo systemctl restart piblue"
 echo "    adapter:  bluetoothctl show | head -5"

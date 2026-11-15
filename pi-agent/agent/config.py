@@ -29,6 +29,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "min_interval_s": 1.0,
         "max_interval_s": 60.0,
     },
+    "auth": {
+        # The GATT service is public, so the command layer is gated instead:
+        # nothing but hello/auth/ping is answered until the phone proves it
+        # knows the pairing code (/etc/piblue/token, mode 0600).
+        "enabled": True,
+        # Inline code, for tests and one-off runs. Leave empty in production so
+        # the secret stays in the token file and not in a file people paste.
+        "token": "",
+        "token_file": "/etc/piblue/token",
+        # Wrong codes before a cool-down. Each guess costs a full handshake.
+        "max_attempts": 5,
+        "lockout_s": 60,
+        # Sessions end when BlueZ reports the disconnect; this is the backstop
+        # for stacks where that signal never arrives. Traffic resets the clock.
+        "session_idle_s": 300,
+    },
     "shell": {
         "enabled": True,
         # False: only binaries listed in "allowed" may be run (safe default).

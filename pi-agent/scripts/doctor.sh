@@ -74,6 +74,31 @@ if command -v bluetoothctl >/dev/null; then
   fi
 fi
 
+# Auth: without a pairing code every client is refused, which looks exactly
+# like a dead link from the phone.
+TOKEN=/etc/piblue/token
+if [[ -f "$TOKEN" ]]; then
+  mode=$(stat -c '%a' "$TOKEN" 2>/dev/null || echo "?")
+  if [[ "$mode" == "600" ]]; then
+    ok "pairing code present (/etc/piblue/token, 0600)"
+  else
+    bad "pairing code has mode $mode  -> sudo chmod 600 $TOKEN"
+  fi
+  if [[ -x "$PY" ]]; then
+    code=$("$PY" -c '
+import sys
+sys.path.insert(0, "/opt/piblue")
+from agent.token import pretty, read_token
+t = read_token()
+print(pretty(t) if t else "")
+' 2>/dev/null)
+    [[ -n "$code" ]] && note "code: $code  (same as the one the phone has)"
+  fi
+elif [[ -x "$PY" ]]; then
+  bad "no pairing code - every client will be refused"
+  note "fix: sudo $PY -m agent.token new"
+fi
+
 echo
 echo "recent agent log:"
 journalctl -u piblue -n 8 --no-pager 2>/dev/null | sed 's/^/  /' || note "no journal access"

@@ -8,6 +8,14 @@
     "min_interval_s": 1.0,
     "max_interval_s": 60.0
   },
+  "auth": {
+    "enabled": true,
+    "token": "",
+    "token_file": "/etc/piblue/token",
+    "max_attempts": 5,
+    "lockout_s": 60,
+    "session_idle_s": 300
+  },
   "shell": {
     "enabled": true,
     "allow_any": false,

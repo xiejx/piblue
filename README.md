@@ -115,7 +115,37 @@ sudo ./scripts/uninstall.sh --purge  # 连 /opt/piblue 和 /etc/piblue 一起删
 2. 建 `/opt/piblue/venv`（`--system-site-packages`，留给旧版 bless 的 dbus 绑定）
 3. `pip install 'bless>=0.3.0'`（0.3 起走 dbus-next，纯 Python；0.2.x 的 txdbus 在 Python 3.11+ 会崩）
 4. 首次安装时把配置写到 `/etc/piblue/config.json`（已存在则保留）
-5. 装 `piblue.service` 并启动
+5. 生成配对码到 `/etc/piblue/token`（已存在则保留，不会悄悄换掉）
+6. 装 `piblue.service` 并启动
+7. 装 `/usr/local/bin/piblue-token`（查看/更换配对码的短命令）
+
+装完最后会打印**配对码**，形如 `ABCD-EFGH-JKLM-NPQR`，手机第一次连接时填一次。日志只是顺带打印，**码本身存在文件里**，任何时候都能查：
+
+```bash
+sudo piblue-token                                    # 看当前生效的码（重跑一次 install.sh 会装上这条命令）
+sudo cat /etc/piblue/token                           # 同一个东西，文件内容就是带横线的码
+sudo piblue-token set MYPI-HOME-PASS-KLMN            # 自己指定一个
+sudo piblue-token new                                # 随机换一个（所有手机都要重填）
+```
+
+没有 `piblue-token` 这条命令（装的是加认证之前的版本）就用全称：
+
+```bash
+sudo /opt/piblue/venv/bin/python -m agent.token show
+```
+
+`set` 的规则：base32 字符（A–Z 加 2–7，**没有 0/1/8/9**），去掉横线空格后至少 12 位（60 bit）。少于 16 位会提示一句，但仍然可用；不想背就用 `new` 随机生成。
+
+用 `dev.sh` 调试时是**另一套码**，不碰 `/etc`，文件在代码目录里，启动时也会打在 `[dev] pairing ...` 那行：
+
+```bash
+sudo ./scripts/dev.sh token                          # 看当前 dev 码（= sudo cat ~/pi-agent/.dev-token）
+sudo ./scripts/dev.sh token new                      # 换一个
+sudo ./scripts/dev.sh token set MYPI-DEVT-OKEN-KLMN   # 自己指定
+sudo rm ~/pi-agent/.dev-token                        # 删掉，下次启动自动换一个
+```
+
+所以同一个 App 在两种模式下要填不同的码：对外面跑着的服务填 `/etc/piblue/token`，对 `dev.sh` 填 `.dev-token`。分不清时看 App 终端里那行 `配对通过 · agent x.y.z` 有没有出现。
 
 装完自检：
 
@@ -135,6 +165,14 @@ sudo ./scripts/doctor.sh
 {
   "ble": { "name": "PiBlue", "adapter": "" },
   "agent": { "log_level": "INFO", "min_interval_s": 1.0, "max_interval_s": 60.0 },
+  "auth": {
+    "enabled": true,
+    "token": "",
+    "token_file": "/etc/piblue/token",
+    "max_attempts": 5,
+    "lockout_s": 60,
+    "session_idle_s": 300
+  },
   "shell": {
     "enabled": true,
     "allow_any": false,
@@ -149,6 +187,7 @@ sudo ./scripts/doctor.sh
 
 * `ble.adapter` 留空 = 让 bless 自己选第一个适配器（板载蓝牙就是这个）。只有插了 USB 蓝牙棒、想指定它时才填 `hci1`；填错会报 `Could not locate bluetooth adapter`。
 * `ble.name` 改成别的名字，App 里就按新名字找（`BleClient.nameHint` 同步改，或直接靠服务 UUID 匹配，也能找到）。
+* `auth.enabled = false` 等于谁连上都能跑命令，只在完全私人的实验环境里关；`auth.token` 留空是为了让密钥待在 `/etc/piblue/token`（0600），而不是待在会被人复制走的配置文件里。
 * `shell.allow_any = true` 等于把 root shell 交给手机，只在完全私人的环境里开。
 * `shell.allow_meta = false` 会拦 `; | & > < $ \``，所以 `ps aux | grep x` 默认跑不了。想放开就改 `true`。
 * 传感器扩展（不用改代码）：
@@ -166,9 +205,48 @@ sudo ./scripts/doctor.sh
 
 `custom.cmd` 打印一个数字、或一个 JSON 对象（如 `{"temp_c": 21.5, "humidity": 44}`）即可。DS18B20 插上 1-Wire 就自动出现，只要在 `/boot/firmware/config.txt` 里开了 `dtoverlay=w1-gpio`。
 
+### 有多台树莓派？
+
+出厂名字都是 `PiBlue`，所以同一次扫描里会出现好几条同名记录。三层区分手段，从最省事到最可靠：
+
+**1. 改广播名**（推荐，扫一眼就认出来）
+
+```bash
+sudo nano /etc/piblue/config.json    # "ble": { "name": "PiBlue-kitchen", ... }
+sudo systemctl restart piblue
+```
+
+名字受广播包大小限制：传统广播包只有 31 字节，flags 占 3、128-bit 服务 UUID 占 18，留给名字的空间很紧。**总长控制在 14 个字符以内**（`PiBlue-kitchen` 正好 14）比较稳，再长可能注册失败或名字被截断——以实机 `journalctl -u piblue -n 20` 的输出为准。App 找设备优先看服务 UUID，所以改名字不会导致找不到。
+
+**2. 看 MAC**（扫描列表第二行）
+
+每一行现在有两行文本：
+
+```
+PiBlue-kitchen
+C4:7F:51:AB:CD:EF    -45 dBm
+```
+
+同名时凭 MAC 就能选中不同的机器。RSSI 只是信号强度，**别用它判断"哪台"**——几台放在一起时差别很小，而且人一动就变。
+
+**3. 连上后看主机名**
+
+`hello` 会返回树莓派的 hostname，连上后标题栏显示 `已连接 PiBlue-kitchen（pi-kitchen）`，终端里也有 `配对通过 · agent 1.1.0 · pi-kitchen`。hostname 没改过的话都叫 `raspberrypi`，那就顺手改掉：
+
+```bash
+sudo hostnamectl set-hostname pi-kitchen
+```
+
 ### 先不写 App，验证链路
 
 这一步别跳过：它把"蓝牙/树莓派的问题"和"App 的问题"分开。
+
+**默认开了配对码，nRF Connect 也要先过认证**，最省事的办法是临时关掉：
+
+```bash
+sudo nano /etc/piblue/config.json   # "auth": {"enabled": false}
+sudo systemctl restart piblue
+```
 
 手机装 **nRF Connect**，扫描 → 连接 `PiBlue` → 展开 `6e400001-…` 服务 → 点 TX（`…0003`）右侧三个箭头订阅通知 → 点 RX（`…0002`）上传箭头，输入：
 
@@ -176,7 +254,9 @@ sudo ./scripts/doctor.sh
 {"id":1,"cmd":"info"}
 ```
 
-上面立刻会跳出 `{"id":1,"ok":true,"data":{…}}`。通了就说明树莓派侧 OK。
+上面立刻会跳出 `{"id":1,"ok":true,"data":{…}}`。通了就说明树莓派侧 OK，**记得把 `auth.enabled` 改回 `true`**。
+
+不想关认证也可以，用 `docs/protocol.md` 里那段 Python 从 `hello` 的 challenge 算出 `mac` 再发 `{"cmd":"auth","mac":"…"}`。
 
 ---
 
@@ -234,11 +314,49 @@ App 只在第一次点"扫描并连接"时申请。
 
 ## 三、命令与安全边界
 
+### 先说清楚 BLE 挡得住什么
+
+广播是公开的：只要树莓派在广播，**任何开了扫描的手机都能看到 `PiBlue`，也都能连上来**。能挡住"连上来"的唯一办法是停止广播，而那样你自己的手机也找不到它。所以真正的关卡在命令层：
+
+**配对码（挑战-响应）**
+
+1. 手机连上 → `hello` → 树莓派回一个一次性随机数 `challenge`
+2. 手机用配对码算 `HMAC-SHA256(key, challenge)` 发 `auth`
+3. 验证通过前，除了 `hello` / `auth` / `ping`，一律回 `{"ok":false,"code":"unauthorized"}`
+
+配对码是 16 位 base32（约 80 bit），存在 `/etc/piblue/token`（0600），**从不经过 BLE** —— 链路上只有对一次性随机数的 HMAC，录下来也没法重放。连错 5 次锁 60 秒。会话在收到 `hello`、设备断开、或 300 秒无报文时失效；断开信号来自 BlueZ 的 D-Bus 事件（`agent/link_watch.py`），收不到时退化成空闲超时，日志里会写明当前用的是哪一种。
+
+即便如此，这层的意义是"**别人连上也没用**"，不是"别人连不上"。真要隐藏设备，得改 `ble.name` 加个随机后缀，或者干脆在不用的时候 `sudo systemctl stop piblue`。
+
+### 树莓派能从手机拿到什么
+
+连接建立时 BlueZ 会为对方建一个 `org.bluez.Device1` 对象，`link_watch.py` 从对象路径（`/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF`）里取出地址写进日志：
+
+```
+link up: 7C:2A:31:5E:10:04 (random) name='Galaxy S23'
+link down: 7C:2A:31:5E:10:04
+```
+
+| 信息 | 能否拿到 | 说明 |
+|---|---|---|
+| 蓝牙地址 | 能 | 但 Android / iOS 默认用 RPA（可解析私有地址），**每次连接都可能不同**；只有配对绑定过，对方才能认出是同一台 |
+| 地址类型 | 能 | `public` / `random`，手机上基本都是 `random` |
+| 设备名 | 不一定 | BlueZ 读到 GAP name 才有；不少手机连上后不主动给，日志里就不会有 `name=` |
+| 信号强度 | 能 | `Device1.RSSI`，随时间变化，只适合判断远近 |
+| 协商 MTU | 能 | 由手机在 `hello` 里自报，BlueZ 不暴露（见 MTU 分片那节） |
+| 型号 / 系统版本 / IP / 手机号 | **不能** | 不在 BLE 链路层里，App 不主动上报就没有 |
+
+结论：**蓝牙地址不能当身份凭证**。它每次可能变、是明文、也能被伪造。要"认设备"只能让 App 主动带一个标识（比如首次启动生成并存本地），但能改 App 的人也能换一个——真正的关卡仍然是配对码。
+
+### `exec` 本身
+
 `exec` 是整条链路上唯一有破坏力的口子，所以默认上了三层锁（`pi-agent/agent/handlers/shell.py`）：
 
 1. **白名单**：只允许 `ls / cat / df / free / uptime / vcgencmd / systemctl / ps / ip …`，`sudo` 会被剥掉再看真实命令
 2. **黑名单**：`rm / dd / mkfs / fdisk …` 永远拒绝，`allow_any=true` 时也拒绝
 3. **元字符**：默认不允许 `; | & > < $ \``，避免 `ls; rm -rf /` 绕过白名单
+
+注意这三层是**防手滑的护栏，不是沙箱**：`sh` 和 `python3` 在白名单里，而白名单只看行首那个可执行文件，所以 `sh -c '…'`、`python3 -c '…'`、`find . -exec …` 都能绕过去。它们都以 root 身份跑。换句话说：**能过配对认证的人就等于拿到了 root**，配对码就是这台机器的实际口令，别外传。
 
 建议：只在自家网络环境用；不要把 `allow_any` 打开后长期开着服务；真要远程管理，用 SSH 更合适，蓝牙这套定位是"在旁边看一眼、改点小东西"。
 
@@ -252,8 +370,11 @@ App 只在第一次点"扫描并连接"时申请。
 | App 扫不到设备 | `sudo systemctl status bluetooth` 是否 active；`bluetoothctl show` 是否 `Powered: yes`；`journalctl -u piblue -n 40` 有没有 `advertising as 'PiBlue'`；树莓派是否被别的蓝牙设备连着（一个适配器同时只能做有限的事） |
 | 扫到但连不上 / 立刻断开 | 关掉手机蓝牙再打开（清 GATT 缓存）；确认没有别的手机还连着；看 `journalctl -u piblue -f` 有无报错 |
 | 连上后一直空白 | 服务 UUID 不匹配 —— 确认树莓派跑的是这个版本的 agent；nRF Connect 能否看到 `6e400001` 服务 |
+| **状态栏显示"已连接（未配对）"，命令一律没反应** | 配对码没填或填错。App 会自己弹出输入框；也可以断开重连，在扫描窗口的输入框里重填。树莓派侧日志：`wrong pairing code, N attempt(s) left`→ 码不对；`too many wrong codes` → 被锁 60 秒，等一会儿；`this Pi has no pairing code yet` → `/etc/piblue/token` 不存在，跑一次 `install.sh` 或 `sudo /opt/piblue/venv/bin/python -m agent.token new` |
+| 树莓派日志刷 `bluez reports the central is gone` | 正常：每次断开都会让会话作废，手机重连后会自己重新认证一次 |
 | **显示"已连接 PiBlue, MTU 517"但每条命令都「树莓派没有响应（超时）」** | 先分清方向：`sudo btmon -w /tmp/bt.log`（或在另一窗口 `sudo btmon`），然后在 App 里点一条命令。日志里 `ATT: Write Request` 之后有 `ATT: Write Response` + `Handle Value Notification` → 链路正常，问题在手机端回调（Android 13+ 只认三参数 `onCharacteristicChanged`，见下）；只有 `Write Request` 没有 `Write Response` → 手机侧写入就卡住了（`BleTimeout`，写入 5 秒超时）；有 Response 没有 Notification → 树莓派收到但没回，看 `journalctl -u piblue -f` 有没有 `rx N bytes` / `<- id=1 cmd=info` / `notify failed` |
 | **小命令（`ls`）能出结果，`info` / 长输出一律超时** | 单向超大 notify 被 BlueZ 丢了：ATT 的 notify PDU 不能超过 `MTU-3`，超了 bluetoothd 直接丢弃，D-Bus 那层仍返回成功，所以树莓派日志里连报错都没有。判断方法：`echo '{"id":1,"cmd":"info"}' \| ./venv/bin/python tools/simulator.py` 看响应多少字节，超过 514（MTU 517）就是它。修法已在代码里：手机连上后先发 `hello` 带上 mtu，树莓派按 `mtu-3` 分片（`BleTransport.set_peer_mtu`）；没收到 hello 时按 20 字节保守发 |
+| **`./scripts/dev.sh: line 15: set: pipefail: invalid option name`**（或任何 `\r` 相关的怪错） | 脚本被存成了 Windows 行尾（CRLF），bash 把 `pipefail\r` 当成选项名，还没跑到第一行逻辑就退出了。在树莓派上一次性修掉：`grep -rlU $'\r' ~/pi-agent --include='*.sh' --include='*.py' \| xargs sed -i 's/\r$//'`。仓库已加 `.gitattributes`（`* text=auto eol=lf`），git 拉取不会再转回 CRLF；但用 scp / 共享目录 / 复制粘贴直接拷文件时仍会复发，改完确认一下：`head -1 ~/pi-agent/scripts/dev.sh \| od -c \| head -2` 里不应该出现 `\r` |
 | 命令返回 `not in the allow list` | 加进 `shell.allowed`，或临时 `allow_any=true` |
 | 命令返回 `shell metacharacters are blocked` | 去掉管道/重定向，或 `allow_meta=true` |
 | 中文乱码 | 不该出现：手机端按字节累积、遇到换行才 UTF-8 解码。若出现，检查是否有人改了 `BleClient.emitFrames` 的分片逻辑 |

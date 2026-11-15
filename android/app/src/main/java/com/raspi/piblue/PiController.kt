@@ -4,6 +4,7 @@ import android.content.Context
 import com.raspi.piblue.ble.BleClient
 import com.raspi.piblue.ble.BleTimeout
 import com.raspi.piblue.data.Json
+import com.raspi.piblue.data.Pairing
 import com.raspi.piblue.data.SensorMeta
 import com.raspi.piblue.data.SensorReading
 import com.raspi.piblue.data.SysInfo
@@ -17,6 +18,8 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import java.io.IOException
@@ -42,10 +45,14 @@ class PiController(context: Context) {
     interface Listener {
         fun onChanged()
         fun onError(message: String)
+
+        /** The Pi wants a pairing code before it will answer anything. */
+        fun onAuthRequired(message: String) {}
     }
 
     var listener: Listener? = null
 
+    private val appContext: Context = context.applicationContext
     val ble = BleClient(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -62,15 +69,36 @@ class PiController(context: Context) {
     var hits: List<BleClient.Hit> = emptyList()
         private set
 
+    /** False while connected but not yet past the pairing gate. */
+    var authorized: Boolean = false
+        private set
+
+    /** Version reported by the Pi, so a wrong deploy is visible at a glance. */
+    var agentVersion: String? = null
+        private set
+
+    /**
+     * The Pi's hostname from `hello`. Every Pi advertises itself as "PiBlue",
+     * so this is the only way to know which one you are actually talking to.
+     */
+    var peerHostname: String? = null
+        private set
+
     var autoRefresh: Boolean = true
         private set
 
     val isConnected: Boolean
         get() = state is BleClient.State.Connected
 
+    /** True when the app may actually send commands. */
+    val isReady: Boolean
+        get() = isConnected && authorized
+
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JSONObject>>()
     private val nextId = AtomicLong(1L)
     private var subJob: Job? = null
+    private var lastMtu: Int = 23
+    private val authMutex = Mutex()
 
     init {
         scope.launch {
@@ -78,8 +106,9 @@ class PiController(context: Context) {
                 state = incoming
                 when (incoming) {
                     is BleClient.State.Connected -> {
+                        lastMtu = incoming.mtu
+                        authorized = false
                         addLine("已连接 ${incoming.name}，MTU ${incoming.mtu}", LineKind.Note)
-                        if (autoRefresh) startSubscription()
                         // Handshake first, and hand over the MTU while we are at
                         // it: the Pi cannot read the negotiated MTU out of BlueZ,
                         // and it must not send a notification bigger than MTU-3.
@@ -87,20 +116,23 @@ class PiController(context: Context) {
                         // silently dropped by bluetoothd and shows up here as a
                         // plain timeout.
                         scope.launch {
-                            runCatching {
-                                call("hello", 5_000) { put("mtu", incoming.mtu) }
+                            if (handshake(incoming.mtu)) {
+                                refreshInfo()
+                                refreshSensors()
+                                if (autoRefresh) startSubscription()
                             }
-                            refreshInfo()
-                            refreshSensors()
                         }
                     }
 
                     is BleClient.State.Failed -> {
+                        authorized = false
                         addLine(incoming.message, LineKind.Error)
                         listener?.onError(incoming.message)
                     }
 
-                    else -> Unit
+                    else -> {
+                        if (incoming !is BleClient.State.Connecting) authorized = false
+                    }
                 }
                 notifyChanged()
             }
@@ -137,6 +169,9 @@ class PiController(context: Context) {
         info = null
         readings = emptyMap()
         sensors = emptyList()
+        authorized = false
+        peerHostname = null
+        lastMtu = 23
         ble.connect(hit)
         notifyChanged()
     }
@@ -144,8 +179,111 @@ class PiController(context: Context) {
     fun disconnect() {
         stopSubscription()
         ble.disconnect()
+        authorized = false
         addLine("已断开连接", LineKind.Note)
         notifyChanged()
+    }
+
+    // ------------------------------------------------------------------ auth
+
+    /**
+     * hello -> (challenge) -> auth.
+     *
+     * Returns true when commands may be sent. The Pi answers nothing but
+     * hello/auth/ping until this succeeds, so every other call is pointless
+     * while it returns false.
+     */
+    private suspend fun handshake(mtu: Int): Boolean = authMutex.withLock {
+        authorized = false
+        notifyChanged()
+
+        val hello = try {
+            callOnce("hello", 5_000, { put("mtu", mtu) }, retry = false)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            fail(friendly(t))
+            return@withLock false
+        }
+
+        val data = hello.optJSONObject("data") ?: JSONObject()
+        agentVersion = if (data.has("version") && !data.isNull("version")) {
+            data.optString("version")
+        } else {
+            null
+        }
+        // The advertised name cannot tell two Pis apart, the hostname can.
+        peerHostname = if (data.has("hostname") && !data.isNull("hostname")) {
+            data.optString("hostname").takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+
+        val auth = data.optJSONObject("auth")
+        if (auth == null || !auth.optBoolean("required", false)) {
+            authorized = true
+            // Which agent is actually deployed has been the sticking point more
+            // than once, so it is stated every time instead of being guessed.
+            agentVersion?.let { addLine("agent $it（此设备未启用配对码）", LineKind.Note) }
+            peerHostname?.let { addLine("已连接 $it", LineKind.Note) }
+            notifyChanged()
+            return@withLock true
+        }
+
+        val challenge = auth.optString("challenge", "")
+        if (challenge.isEmpty()) {
+            fail("树莓派没有下发配对挑战，请检查它是否配置了配对码")
+            return@withLock false
+        }
+        if (Pairing.load(appContext).isEmpty()) {
+            addLine("这台树莓派启用了配对码，需要先填写", LineKind.Error)
+            notifyChanged()
+            listener?.onAuthRequired("这台树莓派启用了配对码，请输入 install.sh 最后打印的 16 位。")
+            return@withLock false
+        }
+
+        val answer = try {
+            Pairing.answer(appContext, challenge)
+        } catch (t: Throwable) {
+            fail("配对码格式不对，应为 16 位字母数字（A-Z、2-7）")
+            return@withLock false
+        }
+
+        try {
+            callOnce("auth", 5_000, { put("mac", answer) }, retry = false)
+            authorized = true
+            val host = peerHostname?.let { " · $it" } ?: ""
+            addLine("配对通过 · agent ${agentVersion ?: "?"}$host", LineKind.Note)
+            notifyChanged()
+            true
+        } catch (c: CancellationException) {
+            throw c
+        } catch (e: PiError) {
+            val message = e.message ?: "配对失败"
+            addLine(message, LineKind.Error)
+            notifyChanged()
+            if (message.contains("wrong pairing code") || message.contains("no challenge")) {
+                listener?.onAuthRequired(message)
+            } else {
+                listener?.onError(message)
+            }
+            false
+        } catch (t: Throwable) {
+            fail(friendly(t))
+            false
+        }
+    }
+
+    /** Called by the UI after the user has entered or corrected the code. */
+    fun retryAuth() {
+        if (!isConnected) return
+        scope.launch {
+            if (handshake(lastMtu)) {
+                refreshInfo()
+                refreshSensors()
+                if (autoRefresh) startSubscription()
+            }
+        }
     }
 
     // ------------------------------------------------------------------ data
@@ -309,6 +447,19 @@ class PiController(context: Context) {
         cmd: String,
         timeoutMs: Long = 15_000,
         build: JSONObject.() -> Unit = {},
+    ): JSONObject = callOnce(cmd, timeoutMs, build, retry = true)
+
+    /**
+     * @param retry re-run the handshake once when the Pi answers
+     *   `code: "unauthorized"`. Sessions end with the link and after an idle
+     *   timeout, so the first command of a new session legitimately lands
+     *   unauthenticated; re-authenticating is invisible to the user.
+     */
+    private suspend fun callOnce(
+        cmd: String,
+        timeoutMs: Long,
+        build: JSONObject.() -> Unit,
+        retry: Boolean,
     ): JSONObject {
         val id = nextId.getAndIncrement()
         val deferred = CompletableDeferred<JSONObject>()
@@ -318,6 +469,10 @@ class PiController(context: Context) {
             ble.send(message.toString())
             val response = withTimeout(timeoutMs) { deferred.await() }
             if (!response.optBoolean("ok", false)) {
+                val code = response.optString("code", "")
+                if (retry && code == "unauthorized" && cmd != "hello" && cmd != "auth") {
+                    if (handshake(lastMtu)) return callOnce(cmd, timeoutMs, build, retry = false)
+                }
                 throw PiError(response.optString("error", "命令失败"))
             }
             return response

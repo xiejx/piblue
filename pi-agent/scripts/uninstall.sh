@@ -50,6 +50,8 @@ if [[ "$PURGE" == "1" ]]; then
   rm -rf /opt/piblue
   log "deleting /etc/piblue"
   rm -rf /etc/piblue
+  # Only removed on purge: without /opt/piblue the helper has nothing to run.
+  rm -f /usr/local/bin/piblue-token
   echo
   log "done - nothing left behind"
 else

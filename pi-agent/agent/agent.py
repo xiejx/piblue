@@ -12,12 +12,18 @@ import logging
 import time
 from typing import Any, Awaitable, Callable
 
+from .auth import AuthGate, AuthRejected
 from .handlers import sensors, shell, sysinfo
 from .protocol import LineDecoder
 
 logger = logging.getLogger("piblue.agent")
 
-VERSION = "1.0.1"
+VERSION = "1.1.0"
+
+#: Answered before the phone has proved it knows the pairing code. ``ping`` is
+#: in the list so a client can check that the link is alive while it is still
+#: hunting for the code; it reveals nothing about the machine.
+UNAUTHENTICATED_COMMANDS = frozenset({"hello", "auth", "ping"})
 
 SendFn = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -34,10 +40,12 @@ class Agent:
         #: notification chunking depends on the MTU the phone negotiated; the
         #: transport owns that state, the agent only parses the value.
         self._set_mtu = set_mtu
+        self.auth = AuthGate(config)
         self.decoder = LineDecoder()
         self._subs: dict[str, asyncio.Task[None]] = {}
         self._handlers = {
             "hello": self._cmd_hello,
+            "auth": self._cmd_auth,
             "ping": self._cmd_ping,
             "info": self._cmd_info,
             "summary": self._cmd_summary,
@@ -56,12 +64,23 @@ class Agent:
         for msg in self.decoder.feed(chunk):
             await self._handle(msg)
 
-    async def _reply(self, mid: Any, ok: bool, data: Any = None, error: str | None = None) -> None:
+    async def _reply(
+        self,
+        mid: Any,
+        ok: bool,
+        data: Any = None,
+        error: str | None = None,
+        code: str | None = None,
+    ) -> None:
         frame: dict[str, Any] = {"id": mid, "ok": ok}
         if ok:
             frame["data"] = data if data is not None else {}
         else:
             frame["error"] = error or "unknown error"
+            if code:
+                # Machine-readable, so the phone can tell "not authorised"
+                # (retry after a handshake) from "that command failed".
+                frame["code"] = code
         await self._send(frame)
 
     async def _handle(self, msg: dict[str, Any]) -> None:
@@ -71,6 +90,17 @@ class Agent:
 
         mid = msg.get("id")
         cmd = str(msg.get("cmd") or "").strip()
+
+        # The gate comes before the dispatch table: an unauthenticated peer must
+        # not be able to tell a real command from a made-up one.
+        if cmd not in UNAUTHENTICATED_COMMANDS and not self.auth.authorized:
+            logger.warning("refused %r: no valid session", cmd or "<empty>")
+            await self._reply(
+                mid, False, code="unauthorized",
+                error="unauthorized: send {'cmd':'hello'} then {'cmd':'auth','mac':...}",
+            )
+            return
+
         handler = self._handlers.get(cmd)
 
         if handler is None:
@@ -86,14 +116,21 @@ class Agent:
             data = await handler(msg)
         except (shell.ShellRejected,) as exc:
             await self._reply(mid, False, error=exc.message)
+        except AuthRejected as exc:
+            await self._reply(mid, False, error=exc.message, code="unauthorized")
         except KeyError as exc:
             await self._reply(mid, False, error=str(exc.args[0] if exc.args else exc))
         except Exception as exc:  # noqa: BLE001 - never let a handler kill the link
             logger.exception("handler %s failed", cmd)
             await self._reply(mid, False, error=f"{type(exc).__name__}: {exc}")
         else:
+            self.auth.touch()
             await self._reply(mid, True, data=data)
             logger.debug("%s ok in %.0f ms", cmd, (time.monotonic() - started) * 1000)
+
+    def reset_auth(self, reason: str = "link closed") -> None:
+        """Called by the transport when BlueZ reports the phone is gone."""
+        self.auth.reset(reason)
 
     async def close(self) -> None:
         for task in list(self._subs.values()):
@@ -108,12 +145,24 @@ class Agent:
         # happen before the first real response goes out.
         if self._set_mtu is not None and msg.get("mtu") is not None:
             self._set_mtu(msg["mtu"])
+
+        # A handshake always starts from scratch: whatever session existed
+        # belonged to a different connection.
+        self.auth.new_session()
+
         return {
             "name": self.config.get("ble", {}).get("name", "PiBlue"),
             "version": VERSION,
             "hostname": __import__("socket").gethostname(),
             "commands": sorted(self._handlers),
+            "auth": self.auth.describe(),
         }
+
+    async def _cmd_auth(self, msg: dict[str, Any]) -> dict[str, Any]:
+        if not self.auth.enabled:
+            return {"authorized": True, "required": False}
+        self.auth.verify(msg.get("mac"))
+        return {"authorized": True, "session_s": self.auth.session_idle_s}
 
     async def _cmd_ping(self, msg: dict[str, Any]) -> dict[str, Any]:
         return {"pong": True, "t": round(time.time(), 3)}
@@ -164,7 +213,8 @@ class Agent:
     async def _cmd_help(self, msg: dict[str, Any]) -> dict[str, Any]:
         return {
             "commands": {
-                "hello": "握手，返回名称/版本/命令列表",
+                "hello": "握手，返回名称/版本/命令列表 + 配对挑战",
+                "auth": "用配对码回答挑战，参数 mac（HMAC-SHA256 十六进制）",
                 "ping": "连通性探测",
                 "info": "完整系统快照",
                 "summary": "精简快照（温度/负载/内存/uptime）",

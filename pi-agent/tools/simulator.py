@@ -26,6 +26,16 @@ from agent.protocol import encode  # noqa: E402
 async def main() -> int:
     config = load_config()
 
+    # The simulator is for poking handlers, not for testing the link, so the
+    # pairing gate is off unless you ask for it. Set PIBLUE_SIM_AUTH=1 together
+    # with PIBLUE_TOKEN=... to exercise the handshake by hand.
+    if os.environ.get("PIBLUE_SIM_AUTH") != "1":
+        config.setdefault("auth", {})["enabled"] = False
+        print(
+            "# auth disabled (PIBLUE_SIM_AUTH=1 to keep the handshake)",
+            file=sys.stderr,
+        )
+
     async def send(frame: dict) -> None:
         sys.stdout.buffer.write(encode(frame))
         sys.stdout.buffer.flush()

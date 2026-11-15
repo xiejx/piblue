@@ -45,17 +45,62 @@
 {"id": 7, "ok": false, "error": "'rm' is on the deny list"}
 ```
 
+失败响应可能带 `code` 字段，用于让手机区分处理方式。目前只有一个值：
+
+```json
+{"id": 7, "ok": false, "code": "unauthorized", "error": "wrong pairing code, 4 attempt(s) left"}
+```
+
+`code: "unauthorized"` 表示**需要（重新）认证**，而不是这条命令本身有问题 —— 手机端应重走一遍 `hello` → `auth` 再重发，而不是把错误抛给用户。会话是随连接结束的，所以断线重连后的第一条命令必然撞上这个。
+
 主动推送（无 `id`，用 `event` 区分）：
 
 ```json
 {"event": "summary", "data": {"cpu_temp_c": 48.2, "load1": 0.14, "mem_used_pct": 23.1, "uptime_s": 91234, "ts": 1760000000.12}}
 ```
 
+## 认证
+
+GATT 服务是公开的：BLE 广播挡不住任何人连上来（能挡住的唯一办法是停止广播，那样自己的手机也扫不到）。所以关卡放在命令层：**认证之前，只有 `hello` / `auth` / `ping` 有回应，其余一律 `code: "unauthorized"`**。
+
+配对码是 16 位 base32（约 80 bit，形如 `ABCD-EFGH-JKLM-NPQR`），存在树莓派的 `/etc/piblue/token`（0600），**从不经过 BLE**。
+
+握手：
+
+```jsonc
+// 1. 手机
+{"id": 1, "cmd": "hello", "mtu": 517}
+
+// 2. 树莓派（challenge 每次握手都不同）
+{"id": 1, "ok": true, "data": {
+  "name": "PiBlue", "version": "1.1.0", "hostname": "raspberrypi", "commands": ["..."],
+  "auth": {"required": true, "algo": "hmac-sha256",
+           "challenge": "9f2c…32 hex…", "session_s": 300}
+}}
+
+// 3. 手机：key = SHA-256("piblue-auth-v1:" + 配对码)，answer = HMAC-SHA256(key, challenge)
+{"id": 2, "cmd": "auth", "mac": "5c1e…64 hex…"}
+
+// 4. 树莓派
+{"id": 2, "ok": true, "data": {"authorized": true, "session_s": 300}}
+```
+
+规则：
+
+* `challenge` 是**一次性**的。验证失败就作废，重试必须重新 `hello`（每次猜测都要一个来回）。
+* 连错 `auth.max_attempts`（默认 5）次锁定 `auth.lockout_s`（默认 60 秒），锁定期间所有回应都是 `too many wrong codes`。
+* `hello` 总是开新会话：无论之前认证过没有，发完 `hello` 就得重新 `auth`。
+* 会话在三种情况下失效：收到 `hello`、BlueZ 报告设备断开、`auth.session_idle_s`（默认 300 秒）内没有任何报文。断开信号是主路径，空闲超时是 BlueZ 信号收不到时的兜底。
+* `auth.enabled: false` 时 `hello` 回 `{"required": false}`，所有命令直接放行 —— 只建议在自己的实验环境里这么干。
+
+服务端实现见 `pi-agent/agent/auth.py`，配对码的生成与派生见 `pi-agent/agent/token.py`。两端派生规则必须一字不差，手机端在 `android/.../data/Pairing.kt`。
+
 ## 命令表
 
 | cmd | 参数 | 返回 `data` |
 | --- | --- | --- |
-| `hello` | `mtu`（可选，手机侧的协商结果） | `name`, `version`, `hostname`, `commands[]` |
+| `hello` | `mtu`（可选，手机侧的协商结果） | `name`, `version`, `hostname`, `commands[]`, `auth`（见上） |
+| `auth` | `mac`（HMAC-SHA256 十六进制） | `authorized`, `session_s` |
 | `ping` | — | `pong`, `t` |
 | `info` | — | 完整系统快照，见下 |
 | `summary` | — | 精简快照 `cpu_temp_c` / `load1` / `mem_used_pct` / `uptime_s` |
@@ -107,7 +152,31 @@
 
 ## 手工联调
 
-用 [nRF Connect](https://play.google.com/store/apps/details?id=no.nordicsemi.android.mcp)：
+开了配对码之后，nRF Connect 也得先过认证。两条路：
+
+**A. 临时关掉认证**（只在实验环境，改完记得改回来）：
+
+```bash
+sudo nano /etc/piblue/config.json   # "auth": {"enabled": false}
+sudo systemctl restart piblue
+```
+
+**B. 自己算 mac**（树莓派上跑，不需要手机）：
+
+```bash
+sudo /opt/piblue/venv/bin/python - <<'PY'
+import hashlib, hmac, json
+from agent.token import derived_key, read_token
+
+code = read_token()                    # 读 /etc/piblue/token
+challenge = input("challenge (hex): ") # 从 nRF Connect 收到的 hello 里抄
+print(hmac.new(derived_key(code), bytes.fromhex(challenge), hashlib.sha256).hexdigest())
+PY
+```
+
+再往 RX 发 `{"cmd":"auth","mac":"<上面那串>"}` 即可。
+
+关掉认证时：
 
 1. 扫描，找到 `PiBlue`，Connect；
 2. 展开 `6e400001-…` 服务 → 点 TX（`…0003`）右边的三个箭头 → 订阅；

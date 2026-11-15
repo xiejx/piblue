@@ -16,6 +16,8 @@ __pycache__/
 venv/
 # debug-mode config created by scripts/dev.sh
 config.dev.json
+# dev-mode pairing code (the production one lives in /etc/piblue/token)
+.dev-token
 
 # OS
 .DS_Store

@@ -15,6 +15,7 @@ from typing import Any
 from .agent import VERSION, Agent
 from .ble_server import BleTransport
 from .config import load_config
+from .link_watch import watch
 from .protocol import encode
 
 logger = logging.getLogger("piblue")
@@ -35,13 +36,26 @@ async def serve(config: dict[str, Any]) -> None:
     agent = Agent(config, send, set_mtu=transport.set_peer_mtu)
 
     await transport.start()
+
+    if agent.auth.enabled:
+        logger.info(
+            "auth: pairing code required, session ends with the link "
+            "(idle backstop %.0f s)", agent.auth.session_idle_s,
+        )
     logger.info("PiBlue %s ready - waiting for the phone", VERSION)
+
+    # Runs for the lifetime of the process; it degrades to a warning and the
+    # idle timeout if the system bus is not reachable.
+    link_task = asyncio.create_task(
+        watch(lambda: agent.reset_auth("phone disconnected"))
+    )
 
     try:
         while True:
             chunk = await inbound.get()
             await agent.feed(chunk)
     finally:
+        link_task.cancel()
         await agent.close()
         await transport.stop()
 

@@ -13,17 +13,18 @@ import android.text.style.StyleSpan
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
-import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ProgressBar
 import android.widget.ScrollView
+import android.widget.SimpleAdapter
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.raspi.piblue.ble.BleClient
+import com.raspi.piblue.data.Pairing
 import com.raspi.piblue.data.SensorMeta
 import com.raspi.piblue.data.SensorReading
 import com.raspi.piblue.data.SysInfo
@@ -86,7 +87,8 @@ class MainActivity : Activity(), PiController.Listener {
     private lateinit var cmdInput: EditText
 
     private var scanDialog: AlertDialog? = null
-    private var scanAdapter: ArrayAdapter<String>? = null
+    private var scanListView: ListView? = null
+    private var pairingDialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -236,6 +238,51 @@ class MainActivity : Activity(), PiController.Listener {
         runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
     }
 
+    override fun onAuthRequired(message: String) {
+        runOnUiThread { showPairingDialog(message) }
+    }
+
+    /**
+     * The pairing code is the only thing standing between a stranger's phone and
+     * a root shell on the Pi, so it is asked for here and never travels over BLE
+     * - only an HMAC of a one-time challenge does.
+     */
+    private fun showPairingDialog(message: String) {
+        if (isFinishing || pairingDialog?.isShowing == true) return
+
+        val input = EditText(this).apply {
+            hint = "ABCD-EFGH-JKLM-NPQR"
+            setText(Pairing.load(this@MainActivity))
+            isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+        }
+
+        val padded = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), 0)
+            addView(input)
+        }
+
+        pairingDialog = AlertDialog.Builder(this)
+            .setTitle("输入配对码")
+            .setMessage(
+                "$message\n\n" +
+                    "配对码在树莓派上，16 位，形如 ABCD-EFGH-JKLM-NPQR" +
+                    "（大小写和横线都不影响）。\n\n" +
+                    "服务模式：sudo /opt/piblue/venv/bin/python -m agent.token show\n" +
+                    "开发模式：cat ~/pi-agent/.dev-token"
+            )
+            .setView(padded)
+            .setPositiveButton("验证") { _, _ ->
+                Pairing.save(this, input.text.toString())
+                controller.retryAuth()
+            }
+            .setNegativeButton("稍后", null)
+            .setOnDismissListener { pairingDialog = null }
+            .show()
+    }
+
     private fun render() {
         renderHeader()
         when (tab) {
@@ -250,8 +297,16 @@ class MainActivity : Activity(), PiController.Listener {
         val state = controller.state
         when (state) {
             is BleClient.State.Connected -> {
-                statusText.text = "已连接 ${state.name}"
-                statusDot.setTextColor(ContextCompat.getColor(this, R.color.dot_on))
+                // hostname is the only reliable "which Pi is this" hint: the
+                // advertised name is the same on every unit.
+                val host = controller.peerHostname?.let { "（$it）" } ?: ""
+                if (controller.authorized) {
+                    statusText.text = "已连接 ${state.name}$host"
+                    statusDot.setTextColor(ContextCompat.getColor(this, R.color.dot_on))
+                } else {
+                    statusText.text = "已连接 ${state.name}$host（未配对）"
+                    statusDot.setTextColor(ContextCompat.getColor(this, R.color.dot_wait))
+                }
                 btnHeader.text = "断开"
             }
 
@@ -280,10 +335,15 @@ class MainActivity : Activity(), PiController.Listener {
             }
         }
 
-        banner.visibility = if (controller.isConnected) View.GONE else View.VISIBLE
-        bannerText.text = when (state) {
-            is BleClient.State.Connecting -> "正在连接 ${state.name}…"
-            is BleClient.State.Failed -> state.message
+        // A connected-but-unauthorised link answers nothing but hello/auth/ping,
+        // so leaving the banner up is the honest thing to show: the Pi is not
+        // usable yet.
+        val needAuth = controller.isConnected && !controller.authorized
+        banner.visibility = if (controller.isConnected && !needAuth) View.GONE else View.VISIBLE
+        bannerText.text = when {
+            needAuth -> "已连接，但还没通过配对验证。点右侧按钮重新填写配对码。"
+            state is BleClient.State.Connecting -> "正在连接 ${state.name}…"
+            state is BleClient.State.Failed -> state.message
             else -> "未连接。打开树莓派电源后点右侧按钮。"
         }
     }
@@ -483,31 +543,68 @@ class MainActivity : Activity(), PiController.Listener {
     }
 
     private fun openScanDialog() {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), 0)
+        }
+
+        // Entered here as well as in the dedicated dialog, because the first
+        // connection is when it is needed and hunting for a settings screen
+        // afterwards is a worse experience than one extra field.
+        val codeInput = EditText(this).apply {
+            hint = "配对码 ABCD-EFGH-JKLM-NPQR"
+            setText(Pairing.load(this@MainActivity))
+            isSingleLine = true
+            textSize = 14f
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+        }
+        container.addView(
+            codeInput,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val note = TextView(this).apply {
+            text = "install.sh 最后会打印一次；留空则连接后会被要求补填。"
+            textSize = 11f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            setPadding(0, dp(2), 0, dp(4))
+        }
+        container.addView(note)
+
         val listView = ListView(this)
-        val adapter = ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, mutableListOf())
-        listView.adapter = adapter
+        container.addView(
+            listView,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(260))
+        )
+
         listView.setOnItemClickListener { _, _, position, _ ->
             val hit = controller.hits.getOrNull(position) ?: return@setOnItemClickListener
+            Pairing.save(this, codeInput.text.toString())
             scanDialog?.dismiss()
             controller.connect(hit)
         }
-        scanAdapter = adapter
+        scanListView = listView
 
         val dialog = AlertDialog.Builder(this)
             .setTitle("附近的树莓派")
-            .setView(listView)
+            .setView(container)
             .setPositiveButton("重新扫描", null)
             .setNegativeButton("取消", null)
             .create()
 
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                Pairing.save(this, codeInput.text.toString())
                 controller.startScan()
             }
         }
         dialog.setOnDismissListener {
             controller.stopScan()
-            scanAdapter = null
+            scanListView = null
         }
 
         scanDialog = dialog
@@ -517,18 +614,31 @@ class MainActivity : Activity(), PiController.Listener {
     }
 
     private fun updateScanList() {
-        val adapter = scanAdapter ?: return
+        val listView = scanListView ?: return
         val hits = controller.hits
-        adapter.clear()
-        if (hits.isEmpty()) {
+        // Two lines per row: the advertised name is not unique (every Pi ships
+        // as "PiBlue"), so the MAC is what actually tells two of them apart.
+        val rows: List<Map<String, String>> = if (hits.isEmpty()) {
             val message = when (val state = controller.state) {
                 is BleClient.State.Failed -> state.message
                 else -> "搜索中… 确认树莓派已开机、名字是 PiBlue"
             }
-            adapter.add(message)
+            listOf(mapOf("line1" to message, "line2" to ""))
         } else {
-            adapter.addAll(hits.map { "${it.name}    ${it.rssi} dBm" })
+            hits.map {
+                mapOf(
+                    "line1" to it.name,
+                    "line2" to "${it.address}    ${it.rssi} dBm",
+                )
+            }
         }
+        listView.adapter = SimpleAdapter(
+            this,
+            rows,
+            android.R.layout.simple_list_item_2,
+            arrayOf("line1", "line2"),
+            intArrayOf(android.R.id.text1, android.R.id.text2),
+        )
     }
 
     override fun onRequestPermissionsResult(
@@ -547,6 +657,7 @@ class MainActivity : Activity(), PiController.Listener {
 
     override fun onDestroy() {
         scanDialog?.dismiss()
+        pairingDialog?.dismiss()
         controller.release()
         super.onDestroy()
     }
