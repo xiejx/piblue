@@ -18,6 +18,7 @@
 #
 #   JAVA_HOME=/c/Program Files/Android/Android Studio/jbr
 #   ANDROID_HOME=/c/Users/me/AppData/Local/Android/Sdk
+#   GRADLE_USER_HOME=/d/ci/gradle-home     # optional: reuse an existing cache
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,6 +27,12 @@ cd "$HERE"
 if [[ -f "$HERE/env.local" ]]; then
   # shellcheck disable=SC1091
   source "$HERE/env.local"
+fi
+
+# env.local sets plain shell variables; anything Gradle itself reads has to be
+# exported before the wrapper can see it.
+if [[ -n "${GRADLE_USER_HOME:-}" ]]; then
+  export GRADLE_USER_HOME
 fi
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -59,6 +66,10 @@ find_jdk
 [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]] || die "no JDK found.
   Install JDK 17 (Temurin / OpenJDK / Android Studio's bundled JBR), then either
   export JAVA_HOME=/path/to/jdk-17 or put it in $HERE/env.local"
+
+# Whatever the source - env.local, an inherited variable, a discovered JBR -
+# the wrapper only sees it if it is exported.
+export JAVA_HOME
 
 JAVA_MAJOR="$("$JAVA_HOME/bin/java" -version 2>&1 | head -1 \
   | sed -E 's/.*"([0-9]+).*/\1/')"

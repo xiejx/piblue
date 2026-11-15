@@ -74,7 +74,10 @@ cd android
 # android/env.local
 JAVA_HOME=/c/Program Files/Android/Android Studio/jbr
 ANDROID_HOME=/c/Users/me/AppData/Local/Android/Sdk
+GRADLE_USER_HOME=/d/shared/gradle-home   # 可选：复用已有的依赖缓存
 ```
+
+`GRADLE_USER_HOME` 指到一个构建过这个项目的缓存目录，就完全不用联网（下面「网络」一节提到的那类问题也能绕过）。
 
 ### 用 Android Studio
 

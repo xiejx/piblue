@@ -94,6 +94,7 @@ sudo ./scripts/doctor.sh
 | **打开后几秒闪退，没连蓝牙也会** | 见下方「启动 5 秒后闪退」一节：`com.google.common.util.concurrent.ListenableFuture` 不在包里，`androidx.profileinstaller` 写 ART profile 时 `VerifyError` |
 | **`./scripts/dev.sh: line 15: set: pipefail: invalid option name`**（或任何 `\r` 相关的怪错） | 脚本被存成了 Windows 行尾（CRLF），bash 把 `pipefail\r` 当成选项名，还没跑到第一行逻辑就退出了。在树莓派上一次性修掉：`grep -rlU $'\r' ~/pi-agent --include='*.sh' --include='*.py' \| xargs sed -i 's/\r$//'`。仓库已加 `.gitattributes`（`* text=auto eol=lf`），git 拉取不会再转回 CRLF；但用 scp / 共享目录 / 复制粘贴直接拷文件时仍会复发，改完确认一下：`head -1 ~/pi-agent/scripts/dev.sh \| od -c \| head -2` 里不应该出现 `\r` |
 | 构建卡在 `Downloading https://services.gradle.org/distributions/gradle-8.7-bin.zip` 或干脆超时 | 第一次构建要下 Gradle 8.7 和 AGP / Kotlin 依赖，合计几百 MB。网络受限就给 Gradle 配镜像（`~/.gradle/init.gradle` 里改 `repositories`）；已经完整构建过一次的机器可以加 `--offline` 跳过联网检查 |
+| `Could not download gradle-8.5.2.jar` → `Read timed out`（`dl.google.com`） | 到 Google Maven 的连接被掐，和项目本身无关。三个办法：把 `GRADLE_USER_HOME` 指到一台已经构建过本项目的机器上的缓存（`android/env.local` 里写一行即可，之后完全不用联网）、给 `google()` 配镜像、或调大 `-Dorg.gradle.internal.http.socketTimeout`。GitHub Actions 的 runner 直连没问题 |
 | `Failed to find target with hash string 'android-34'` | SDK 里没装 Platform 34：`sdkmanager "platforms;android-34" "build-tools;34.0.0"` |
 | `./gradlew: Permission denied` | 可执行位丢了（Windows 上解压或打包常见）：`chmod +x android/gradlew`；仓库已把 gradlew 与所有 `.sh` 设为 755，如果又变回 644，用 `git update-index --chmod=+x android/gradlew` 修回去 |
 
