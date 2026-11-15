@@ -93,7 +93,9 @@ sudo ./scripts/doctor.sh
 | --- | --- |
 | **打开后几秒闪退，没连蓝牙也会** | 见下方「启动 5 秒后闪退」一节：`com.google.common.util.concurrent.ListenableFuture` 不在包里，`androidx.profileinstaller` 写 ART profile 时 `VerifyError` |
 | **`./scripts/dev.sh: line 15: set: pipefail: invalid option name`**（或任何 `\r` 相关的怪错） | 脚本被存成了 Windows 行尾（CRLF），bash 把 `pipefail\r` 当成选项名，还没跑到第一行逻辑就退出了。在树莓派上一次性修掉：`grep -rlU $'\r' ~/pi-agent --include='*.sh' --include='*.py' \| xargs sed -i 's/\r$//'`。仓库已加 `.gitattributes`（`* text=auto eol=lf`），git 拉取不会再转回 CRLF；但用 scp / 共享目录 / 复制粘贴直接拷文件时仍会复发，改完确认一下：`head -1 ~/pi-agent/scripts/dev.sh \| od -c \| head -2` 里不应该出现 `\r` |
-| 构建报 `No cached version ... available for offline mode` | 工具链缓存里缺这个 artifact。去掉 `--offline` 让 Gradle 联网取一次，或在 `app/build.gradle.kts` 的 `resolutionStrategy` 里 force 到已缓存版本 |
+| 构建卡在 `Downloading https://services.gradle.org/distributions/gradle-8.7-bin.zip` 或干脆超时 | 第一次构建要下 Gradle 8.7 和 AGP / Kotlin 依赖，合计几百 MB。网络受限就给 Gradle 配镜像（`~/.gradle/init.gradle` 里改 `repositories`）；已经完整构建过一次的机器可以加 `--offline` 跳过联网检查 |
+| `Failed to find target with hash string 'android-34'` | SDK 里没装 Platform 34：`sdkmanager "platforms;android-34" "build-tools;34.0.0"` |
+| `./gradlew: Permission denied` | 可执行位丢了（Windows 上解压或打包常见）：`chmod +x android/gradlew`；仓库已把 gradlew 与所有 `.sh` 设为 755，如果又变回 644，用 `git update-index --chmod=+x android/gradlew` 修回去 |
 
 ---
 
@@ -104,7 +106,7 @@ sudo ./scripts/doctor.sh
 链路：
 
 1. `androidx.core` → `androidx.concurrent:concurrent-futures` 声明依赖 `com.google.guava:listenablefuture:1.0`（这个 artifact 里**只有一个 `ListenableFuture` 接口**，没有实现）。
-2. 离线缓存里只有它的 `.pom` 没有 `.jar`，于是当时用 `force("...:9999.0-empty-to-avoid-conflict-with-guava")` 顶掉 —— 那是个**空 jar**，只适用于"项目里已经有完整 Guava"的场景。
+2. 当时那台构建机上只有它的 `.pom` 没有 `.jar`，于是用 `force("...:9999.0-empty-to-avoid-conflict-with-guava")` 顶掉 —— 那是个**空 jar**，只适用于"项目里已经有完整 Guava"的场景。
 3. 本工程没有 Guava，结果 APK 里 `androidx.concurrent.futures.AbstractResolvableFuture implements ListenableFuture` 这句引用的接口根本不存在。
 4. 启动时 `androidx.startup` 注册的 `ProfileInstallerInitializer` 会在首帧后 `postDelayed(5000 + rand(1000))`，到点在**后台线程**调 `ProfileInstaller.writeProfile()` → `ProfileVerifier.writeProfileVerification()`。
 5. `ProfileVerifier` 有 `ResolvableFuture` 静态字段和返回 `ListenableFuture` 的方法，ART 校验器解析不到类型 → `VerifyError`，后台线程无人捕获 → 进程死。
@@ -114,7 +116,7 @@ sudo ./scripts/doctor.sh
 自查方式（不解包、不装工具）：
 
 ```bash
-unzip -l dist/PiBlue-debug.apk | head
+unzip -l android/app/build/outputs/apk/debug/app-debug.apk | head
 # 或用 dexdump / 任意 dex 分析脚本确认 ListenableFuture 在包内
 ```
 

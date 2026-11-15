@@ -23,12 +23,12 @@
 
 ## 手机端
 
-* **已构建成功** —— `dist/PiBlue-debug.apk`（App 1.3.2 / versionCode 7，agent 协议 1.3.1），AGP 8.5.2 / Kotlin 1.9.24 / compileSdk 34，`aapt dump badging` 校验包名、权限、启动 Activity 均正确，`aapt2 dump resources` 确认 `custom_add`/`custom_hint` 在包里。
+* **能出包** —— `./gradlew assembleDebug` 产出 `android/app/build/outputs/apk/debug/app-debug.apk`；推 `v*` tag 后由 GitHub Actions 自动构建并挂到 [Releases](https://github.com/xiejx/piblue/releases)。构建栈：JDK 17 / Gradle 8.7 / AGP 8.5.2 / Kotlin 1.9.24 / compileSdk 34。1.3.2 的包做过 `aapt dump badging` 校验（包名、权限、启动 Activity 均正确）与 `aapt2 dump resources`（确认 `custom_add`/`custom_hint` 在包里）。
 * 真机首次运行暴露的「启动 5 秒后闪退」已定位并修复（`listenablefuture` 空 jar 导致 `ListenableFuture` 缺类 → `profileinstaller` VerifyError），详见 [troubleshooting.md](troubleshooting.md#启动-5-秒后闪退真机踩到的第一个坑已修)；同时加了全局崩溃落盘。
 * 1.3.2 修的是终端页输入框「打一两个字母就失焦、软键盘收起」：根因是 `renderTerminal()` 每收到一次 `summary` 推送（2 s 一次）就调 `termScroll.fullScroll(FOCUS_DOWN)`，而 `fullScroll` 的语义不只是滚到底，还会**把焦点交给新可视区域里的可聚焦视图**（`textIsSelectable` 的输出 TextView，或 ScrollView 自己），于是输入框被反复夺焦。现在：输出区仅在终端内容真的变化时才重绘（按列表实例比对），滚动改用 `scrollTo`（只移像素不碰焦点），并且只在用户本来就停在底部时跟随新输出（往上翻着看 `dmesg` 不会被拽回底部）；`term_scroll` 在 XML 里显式 `focusable=false`，`sendCommand()` 发送后把焦点留在输入框。
 * 1.3.3 补的是控制页自定义命令「点了执行却看不到结果」：树莓派端 `_custom` 一直在回包里带 `stdout` / `stderr` / `code` / `timed_out` / `duration_ms`（与 `exec` 同构），但 App 的 `runAction` 只取了 `message` 就丢掉其余字段，用户只看到一句「nginx：完成」。现在 `runAction` 多了 `onData` 回调与 `announce` 开关，执行完弹结果对话框（等宽、可选中、可复制，超长时限高滚动）。字段用 `tools/simulator.py` 核对过：成功（`echo` → `code 0` + stdout）与失败（不存在的命令 → `code 1` + stderr）两种回包都与 `Json.exec` 对得上。
 * 控制页的按钮由 `control` 的 `status` 驱动，所以**树莓派上增减动作不需要重装 App**，最坏情况只是新动作没有中文标签（会按动作名显示）。
-* 构建时的环境约束已固化在 `app/build.gradle.kts` 里，见 [android.md](android.md#构建环境约束)。
+* 构建时的依赖约束已固化在 `app/build.gradle.kts` 里，见 [android.md](android.md#依赖约束别随手删)。
 
 **仍需真机验证的**：BLE 实际链路（`btmon` 那一套）、NTFS 真机挂载、1.3.2 之后的终端连续输入，以及 1.3.3 的命令结果对话框（模拟器只验证了回包，没在真机上点过按钮）。
 

@@ -1,52 +1,127 @@
 # 手机端：安装与构建
 
-## 现成的包
+## 装现成的包
 
-仓库里已经有一个构建好的调试包：`dist/PiBlue-debug.apk`（App 1.3.3 / versionCode 8）。开 USB 调试后：
+打 tag 后由 GitHub Actions 自动出包，产物挂在 [Releases](https://github.com/xiejx/piblue/releases) 页，命名 `PiBlue-<版本>-debug.apk`。下到电脑上，开 USB 调试后：
 
 ```bash
-"/d/git-workspace/casting-android/.toolchain/sdk/platform-tools/adb" \
-  install -r dist/PiBlue-debug.apk
+adb install -r PiBlue-1.3.3-debug.apk
 ```
 
-也可以把 APK 传到手机上直接安装（需要允许"安装未知来源应用"）。
+`adb` 在 Android SDK 的 `platform-tools` 里。没装 SDK 也可以直接把 APK 传到手机上点安装（需要允许"安装未知来源应用"）。
+
+> 仓库里**不放** APK（`.gitignore` 挡掉了 `*.apk`），二进制会随每次构建把 git 历史撑大。要哪个版本去 Releases 拿。
 
 ---
 
 ## 自己构建
 
-已用本机工具链 `D:\git-workspace\casting-android\.toolchain`（JDK 17 + SDK 34 + Gradle 8.7）**离线构建成功**。
+### 环境要求
 
-命令行（Git Bash）：
+| 组件 | 版本 | 说明 |
+| --- | --- | --- |
+| **JDK** | 17 | AGP 8.5 要求 17+，21 也能跑。Temurin / OpenJDK / Android Studio 自带的 JBR 都行 |
+| **Android SDK Platform** | 34（Android 14） | `compileSdk = 34`、`targetSdk = 34` |
+| **Android SDK Build-Tools** | 34.0.0 | `aapt2` / `d8` / `zipalign` 等 |
+| **Gradle** | 8.7 | **不用预装**，wrapper 首次运行会自动下载 |
+| **磁盘** | 约 2 GB | Gradle 缓存 + SDK 组件 + 构建产物 |
+| **网络** | 首次构建需要 | 下载 Gradle 发行版与 AGP / Kotlin 依赖；装好之后可以离线构建 |
+| **系统** | Linux / macOS / Windows | Windows 上 `./gradlew` 需要 Git Bash，cmd / PowerShell 用 `gradlew.bat` |
+
+JDK 与 SDK 按下面的顺序查找，找到第一个能用的就停：
+
+| 工具 | 查找顺序 |
+| --- | --- |
+| JDK | `$JAVA_HOME` → PATH 上的 `java` → Android Studio 自带的 JBR |
+| Android SDK | `$ANDROID_HOME` / `$ANDROID_SDK_ROOT` → `local.properties` 里的 `sdk.dir` → 各系统默认路径（`%LOCALAPPDATA%\Android\Sdk`、`~/Library/Android/sdk`、`~/Android/Sdk`） |
+
+SDK 里缺 Platform 34 的话，用 SDK Manager 补：
+
+```bash
+sdkmanager "platforms;android-34" "build-tools;34.0.0"
+```
+
+### 构建命令
 
 ```bash
 cd android
-./build-apk.sh            # debug
-./build-apk.sh release    # release（未签名）
+
+./gradlew assembleDebug      # 调试包，可直接安装
+./gradlew assembleRelease    # 发布包，未签名
+./gradlew clean              # 清掉本模块的 build/
+```
+
+产物固定在 `android/app/build/outputs/apk/debug/app-debug.apk`。
+
+* Windows 上用 **Git Bash** 才能跑 `./gradlew`；cmd / PowerShell 里用 `gradlew.bat assembleDebug`，参数一样。
+* 首次运行会下载 Gradle 8.7 发行版（约 130 MB），之后走 `~/.gradle` 缓存；加 `--offline` 可以强制离线。
+* 构建日志太吵时加 `--console=plain`，想要更详细加 `--info`。
+
+### 可选的封装脚本
+
+`android/build-apk.sh` 是上面那几条命令的薄封装：自动定位 JDK / SDK，跑完把 APK 路径、体积和 `adb install` 命令打出来。
+
+```bash
+cd android
+./build-apk.sh              # debug
+./build-apk.sh release      # release（未签名）
 ./build-apk.sh clean
 ```
 
-脚本自己设好 `JAVA_HOME` / `ANDROID_HOME` / `GRADLE_USER_HOME`，并把 `local.properties` 指到工具链的 SDK —— 不依赖 Android Studio，也不依赖网络。工具链换位置时：
+它和 `./gradlew` 做的事完全一样，只是少打字。定位不到环境时会直接说缺什么、怎么装。JDK / SDK 装在非常规位置就写进 `android/env.local`（已被 git 忽略，不会外泄本机路径）：
 
 ```bash
-TOOLCHAIN=/d/somewhere/.toolchain ./build-apk.sh
+# android/env.local
+JAVA_HOME=/c/Program Files/Android/Android Studio/jbr
+ANDROID_HOME=/c/Users/me/AppData/Local/Android/Sdk
 ```
 
-也可以用 Android Studio 打开 `android/` 目录直接 Run（wrapper 已生成，Gradle JDK 选 17）。
+### 用 Android Studio
 
-最低支持 Android 7.0（API 24），目标 API 34。
+直接 Open `android/` 目录，Gradle JDK 选 17，Run 即可。`local.properties` 由 Studio 自己写，不用手工维护。
 
-### 为什么 UI 是原生 View 而不是 Compose
+最低支持 Android 7.0（`minSdk = 24`），目标 API 34。
 
-这台机器到 Google Maven 的大文件下载完全不通（实测 60 秒 0 字节，`Read timed out`），Compose 那几十个 artifact 拉不下来，构建必然失败。改用框架自带的 LinearLayout / TextView / ListView 后，依赖只剩 `core-ktx` + `coroutines`，全部命中工具链缓存，可以完全离线构建。功能与交互和原设计一致。
+---
 
-### 构建环境约束
+## 打 tag 自动出包
 
-这些已经固化在 `app/build.gradle.kts` 里，别随手删：
+`.github/workflows/build-apk.yml`，推一个 `v*` 形式的 tag 就触发：
 
-* 排除 `kotlin-stdlib-jdk7` / `kotlin-stdlib-jdk8`（1.8+ 已并入 stdlib）；
-* 把 `collection` / `annotation` 钉到工具链缓存里已有的版本；
-* `com.google.guava:listenablefuture` 直接 `exclude`，接口由源码补上（`app/src/main/java/com/google/common/util/concurrent/ListenableFuture.java`）—— 原因和踩坑过程见 [troubleshooting.md](troubleshooting.md) 的「启动 5 秒后闪退」。
+```bash
+# 先把 app/build.gradle.kts 里的 versionCode / versionName 改成目标版本并提交
+git tag v1.3.4
+git push origin v1.3.4
+```
+
+流程：`ubuntu-latest` runner → Temurin JDK 17 → Android SDK Platform 34 + Build-Tools 34.0.0 → `./gradlew assembleDebug` → 校验 APK 的 `versionName` 与 tag 一致 → 改名 `PiBlue-1.3.4-debug.apk`、算 SHA256 → 传到 Release 附件，同时留一份 workflow artifact（保留 90 天）。
+
+两点必须注意：
+
+* **tag 要和 `versionName` 对上**。CI 会用 `aapt dump badging` 读包里的版本号，和 tag 不一致就直接失败——宁可不出包，也别发出一个标题写 A、装上去是 B 的包。
+* **`versionCode` 每次都要 +1**，否则手机上覆盖安装会失败（同一个 versionCode 装不进去）。`versionName` 是给人看的，`versionCode` 是给系统比的。
+
+`workflow_dispatch` 也能手动跑（仓库 Actions 页 → Build APK → Run workflow），手动跑只出 artifact、不建 Release。
+
+---
+
+## 为什么 UI 是原生 View 而不是 Compose
+
+依赖表只有 `core-ktx` 和 `coroutines` 两行，换来的东西不少：
+
+* APK 约 2 MB，冷启动快，UI 就是 LinearLayout / TextView / ListView，这套控件十年内不会过时；
+* 不需要 Compose 编译器插件，构建链路短，CI 上从零到出包一分钟左右；
+* 依赖图小到可以手工钉死版本（见下），不会因为某个次级依赖升级就悄悄改行为。
+
+代价是没有现成的 Material 组件和声明式状态管理，界面代码比 Compose 啰嗦。功能与交互没有区别。
+
+## 依赖约束（别随手删）
+
+这些都写在 `app/build.gradle.kts` 里，每一条都对应过一次构建失败或一次线上崩溃：
+
+* 排除 `kotlin-stdlib-jdk7` / `kotlin-stdlib-jdk8`——1.8 之后这两个 artifact 已经是空壳，内容并进了 `kotlin-stdlib`；
+* 把 `androidx.collection` / `androidx.annotation` 钉到确定版本，避免次级依赖把版本顶上去；
+* `com.google.guava:listenablefuture` 直接 `exclude`，接口用源码补（`app/src/main/java/com/google/common/util/concurrent/ListenableFuture.java`）——**千万不要**改回 `force("listenablefuture:9999.0-empty-to-avoid-conflict-with-guava")`，那个 jar 是空的，只在完整 Guava 在 classpath 上时才成立；照抄会让 `androidx.profileinstaller` 在启动 5 秒后 `VerifyError` 崩掉。踩坑全程见 [troubleshooting.md](troubleshooting.md) 的「启动 5 秒后闪退」。
 
 ---
 
@@ -76,7 +151,8 @@ App 只在第一次点"扫描并连接"时申请。
 
 ```
 android/
-├─ build-apk.sh                       命令行构建（走本机工具链，可离线）
+├─ build-apk.sh                       命令行构建的薄封装（等价于 ./gradlew）
+├─ gradlew                             Gradle wrapper，钉 8.7
 └─ app/src/main/java/com/raspi/piblue/
    ├─ ble/BleClient.kt                扫描 / 连接 / 分片写 / 按字节重组
    ├─ data/Models.kt                  JSON → 数据类

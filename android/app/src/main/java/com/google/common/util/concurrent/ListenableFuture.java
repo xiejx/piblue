@@ -10,10 +10,12 @@ import java.util.concurrent.Future;
  * <p>Why it lives here instead of on the dependency list:
  *
  * <p>{@code androidx.concurrent:concurrent-futures} (pulled in by androidx.core) declares a
- * dependency on that artifact, but the offline Gradle cache on the build machine only has its
- * .pom, not its .jar, so the build used to force the "9999.0-empty-to-avoid-conflict-with-guava"
- * placeholder. That placeholder is *empty* - it is meant for projects that already depend on full
- * Guava, whose classes then supply the interface.
+ * dependency on that artifact. Resolving a published artifact for one bare interface buys
+ * nothing and has already broken this build once, so the artifact is excluded and the
+ * interface is compiled from this file instead. Earlier the build tried to satisfy the
+ * dependency with the "9999.0-empty-to-avoid-conflict-with-guava" placeholder. That
+ * placeholder is *empty* - it is meant for projects that already depend on full Guava, whose
+ * classes then supply the interface.
  *
  * <p>This app has no Guava, so the placeholder left the APK referencing a class that simply was
  * not there. Nothing touched it during startup, which is why the app appeared fine - until

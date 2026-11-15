@@ -64,21 +64,20 @@ sudo ./scripts/doctor.sh
 
 ### 2. 手机端
 
-现成的包在 `dist/PiBlue-debug.apk`，开 USB 调试后：
+从 [Releases](https://github.com/xiejx/piblue/releases) 下载 `PiBlue-<版本>-debug.apk`，开 USB 调试后：
 
 ```bash
-# adb 不在 PATH 时用工具链里的全路径，见 docs/android.md
-adb install -r dist/PiBlue-debug.apk
+adb install -r PiBlue-1.3.3-debug.apk
 ```
 
-也可以直接把 APK 传到手机上安装。要自己构建：
+也可以直接把 APK 传到手机上点安装。要自己构建（需要 JDK 17 + Android SDK Platform 34）：
 
 ```bash
 cd android
-./build-apk.sh          # 离线构建，不依赖 Android Studio 和网络
+./gradlew assembleDebug     # 产物：app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> 工具链要求、权限、为什么 UI 用原生 View 而不是 Compose：[docs/android.md](docs/android.md)
+> 完整环境要求、`./build-apk.sh` 封装、打 tag 自动出包的流程：[docs/android.md](docs/android.md)
 
 ### 3. 连上
 
@@ -140,7 +139,7 @@ cd android
 | 文件 | 内容 |
 | --- | --- |
 | [docs/agent-install.md](docs/agent-install.md) | 树莓派端完整安装、`config.json` 全字段、配对码管理、多台设备、链路自测 |
-| [docs/android.md](docs/android.md) | App 构建与工具链、权限、四个页面的细节、构建环境约束 |
+| [docs/android.md](docs/android.md) | 环境要求与构建命令、打 tag 自动出包、权限、四个页面的细节 |
 | [docs/control.md](docs/control.md) | 控制页动作表、磁盘挂载规则（含 NTFS）、自定义命令、Wi-Fi 行为 |
 | [docs/security.md](docs/security.md) | 安全边界：BLE 挡得住什么、`exec` 三层锁、能拿到手机的哪些信息 |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | 排错速查、超时定位、启动闪退的来龙去脉 |
@@ -158,7 +157,7 @@ piblue/
 │  ├─ scripts/      dev.sh / install.sh / uninstall.sh / doctor.sh
 │  └─ tools/        simulator.py（不开蓝牙，用 stdin/stdout 跑同一套逻辑）
 ├─ android/         手机 App（Kotlin，原生 View）
-├─ dist/            现成的调试 APK
+├─ .github/         CI：推 tag 自动构建 APK 并挂到 Release
 └─ docs/            详细文档（本文件的详细版都在这里）
 ```
 
