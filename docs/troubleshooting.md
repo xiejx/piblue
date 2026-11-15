@@ -84,6 +84,7 @@ sudo ./scripts/doctor.sh
 | --- | --- |
 | 状态页时间显示"未同步 NTP" | 树莓派没连上网或 NTP 被挡住，`timedatectl show -p NTPSynchronized` 会返回 `no`。没有 RTC 的型号断电后会从旧时间继续走，表现为 TLS/apt 报证书错误。`sudo systemctl restart systemd-timesyncd` 或临时 `sudo date -s` 都行；有网络时会自己校正 |
 | 温度显示 `—` | 树莓派上没有 `vcgencmd`（非官方系统）且 thermal zone 读不到，属正常降级 |
+| 状态页 Wi-Fi 后面一直是 `(0/70)` | 1.3.1 及更早的 agent 用 `iwgetid -r --signal` 取信号，但 wireless-tools 的 `iwgetid` **根本没有 `--signal` 这个选项**（只有 `-a/-c/-f/-m/-p/-r/-s`），命令报 `unrecognized option` 后退 1，值永远是 `null`，App 又把它兜底成 `0`，看着像"一点信号都没有"。现在改成读 `/proc/net/wireless` 第三列（link quality，0..70）：`sudo cat /proc/net/wireless` 里 `wlan0: 0000   61.  -49.  ...` 的 `61.` 就是它。取到值后重新 `install.sh` 并 `sudo systemctl restart piblue` 即可。想要 dBm 看控制页，或 `iw dev wlan0 link` |
 | 传感器列表只有 SoC 温度 | 没接探头，或 1-Wire 没开（`dtoverlay=w1-gpio`），或 DHT 没装 `adafruit-circuitpython-dht` |
 
 ---

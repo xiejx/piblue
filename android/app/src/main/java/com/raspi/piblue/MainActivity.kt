@@ -601,10 +601,14 @@ class MainActivity : Activity(), PiController.Listener {
         infoCores.text = info.cpuCount.toString()
 
         val wifi = info.wifi
-        infoWifi.text = if (wifi == null || wifi.ssid == null) {
-            "—"
-        } else {
-            "${wifi.ssid} (${wifi.signal ?: 0}/70)"
+        // signal is /proc/net/wireless link quality, 0..70. Older agents sent
+        // null here (they asked iwgetid for a --signal flag that does not
+        // exist), and printing that as "0/70" reads as "no signal at all", so
+        // an unknown value is left out of the line instead of faked.
+        infoWifi.text = when {
+            wifi == null || wifi.ssid == null -> "—"
+            wifi.signal == null -> wifi.ssid
+            else -> "${wifi.ssid} (${wifi.signal}/70)"
         }
 
         val throttle = info.throttled

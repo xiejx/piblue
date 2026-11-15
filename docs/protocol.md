@@ -141,6 +141,8 @@ GATT 服务是公开的：BLE 广播挡不住任何人连上来（能挡住的�
 
 字段都可能为 `null`（比如没插 Wi-Fi、没有 `vcgencmd`），手机端要按可空处理。
 
+`wifi.signal` 是 `/proc/net/wireless` 的 **link quality（0..70）**，不是 dBm：状态页把它印成 `xqx688 (61/70)`，分母 70 是这一列的满刻度。驱动不填这一列时为 `null`，语义上就是"不知道"，App 于是只显示 SSID，不会补一个 0 出来。要 dBm 看 `control` 里同名的 `wifi.signal`（nmcli 的负值，如 `-49`）或 `iw dev wlan0 link`——两个字段同名但量纲不同，不能互相换算。
+
 `time` 同时给**格式化字符串**和 `epoch`，不是冗余：`local` 是树莓派自己时区下的读数，手机要是拿 `epoch` 按本地时区重排，就正好把"树莓派差了几个时区"这件事抹掉了。`synced` 来自 `timedatectl show -p NTPSynchronized`（没有这个工具时为 `null`）；RTC 和网络都没有的树莓派会停在 1970 年，那是 TLS 和 apt 各种诡异报错的源头，状态页会把它标出来。`summary` 推送里也带同一个 `time` 对象，所以订阅开着时时间会跟着刷新。
 
 ### 传感器读数
