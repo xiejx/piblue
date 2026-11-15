@@ -167,3 +167,12 @@ piblue/
 ## 版本
 
 App 1.3.3（versionCode 8）/ agent 协议 1.3.1。当前状态与未验证项见 [docs/status.md](docs/status.md)。
+
+---
+
+## 许可
+
+[MIT](LICENSE)。拿去改、拿去商用都行，保留版权声明即可。
+
+> 这个工具以 root 身份在树莓派上执行命令，默认开着蓝牙广播。装之前请读完 [docs/security.md](docs/security.md)，配对码是唯一的关卡。
+
