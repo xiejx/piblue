@@ -27,7 +27,7 @@
 需要树莓派 3B+ / 4 / 5，Raspberry Pi OS Bookworm 或 Bullseye，能 SSH 进去。
 
 ```bash
-# 在电脑上（Windows 用 Git Bash）：把代码传上去
+# 在电脑上（Windows 用 Git Bash），进到仓库目录里：把代码传上去
 scp -r pi-agent pi@raspberrypi.local:~/
 ssh pi@raspberrypi.local
 ```
@@ -150,7 +150,7 @@ cd android
 ## 仓库结构
 
 ```
-rasberrypi/
+piblue/
 ├─ pi-agent/        树莓派端（Python + bless）
 │  ├─ agent/        入口、GATT 服务、命令分发、分帧、handlers/
 │  ├─ scripts/      dev.sh / install.sh / uninstall.sh / doctor.sh
