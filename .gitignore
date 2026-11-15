@@ -3,6 +3,8 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+# machine-specific JAVA_HOME / ANDROID_HOME for build-apk.sh
+android/env.local
 android/.idea/
 android/.kotlin/
 *.iml
