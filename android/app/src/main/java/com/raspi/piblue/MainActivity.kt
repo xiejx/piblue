@@ -95,6 +95,9 @@ class MainActivity : Activity(), PiController.Listener {
     private lateinit var termOutput: TextView
     private lateinit var cmdInput: EditText
 
+    /** Transcript the output view was last built from, so idle ticks cost nothing. */
+    private var termDrawn: List<TermLine>? = null
+
     // control
     private lateinit var controlEmpty: TextView
     private lateinit var controlCards: LinearLayout
@@ -322,6 +325,9 @@ class MainActivity : Activity(), PiController.Listener {
         val text = cmdInput.text.toString()
         if (text.isBlank()) return
         cmdInput.setText("")
+        // Keep the caret - and therefore the keyboard - in the command box: a
+        // terminal you have to re-tap after every line is not a terminal.
+        cmdInput.requestFocus()
         controller.runCommand(text)
     }
 
@@ -1279,6 +1285,14 @@ class MainActivity : Activity(), PiController.Listener {
 
     private fun renderTerminal() {
         val lines = controller.terminal
+        // The Pi pushes a `summary` every 2 s, and every push re-renders the
+        // open page. Rebuilding this spannable (and scrolling) on each tick is
+        // what used to yank focus out of the command box mid-word, so the
+        // transcript is only redrawn when it actually grew.
+        if (lines === termDrawn) return
+        termDrawn = lines
+
+        val stayAtBottom = isTermAtBottom()
         val builder = SpannableStringBuilder()
         lines.forEach { line ->
             val start = builder.length
@@ -1316,7 +1330,34 @@ class MainActivity : Activity(), PiController.Listener {
             )
         }
         termOutput.text = builder
-        termScroll.post { termScroll.fullScroll(View.FOCUS_DOWN) }
+        // Only follow new output when the user was already at the end: someone
+        // scrolled up reading `dmesg` should not be dragged back down by a
+        // command that finishes while they read.
+        if (stayAtBottom) scrollTerminalToBottom()
+    }
+
+    /** True while the transcript is parked at its end (or has no height yet). */
+    private fun isTermAtBottom(): Boolean {
+        val content = termOutput.height
+        if (content == 0) return true
+        return termScroll.scrollY + termScroll.height >= content - dp(24)
+    }
+
+    /**
+     * Scroll to the end of the transcript without touching focus.
+     *
+     * `fullScroll(FOCUS_DOWN)` looks like the obvious call and is the trap: as
+     * its documentation says, it also hands focus to the bottom-most focusable
+     * view in the newly visible area - here the selectable output TextView, or
+     * the ScrollView itself. Called on a 2 s timer that steals the keyboard
+     * from the input field after a letter or two. [ScrollView.scrollTo] only
+     * moves pixels.
+     */
+    private fun scrollTerminalToBottom() {
+        termScroll.post {
+            val bottom = (termOutput.height - termScroll.height).coerceAtLeast(0)
+            termScroll.scrollTo(0, bottom)
+        }
     }
 
     private fun colorFor(kind: LineKind): Int = when (kind) {

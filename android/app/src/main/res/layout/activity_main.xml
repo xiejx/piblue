@@ -1135,12 +1135,16 @@
                 android:layout_height="1dp"
                 android:background="@color/divider" />
 
+            <!-- 输出区不可拿焦点：ScrollView 默认 focusable，一旦参与焦点竞争就会
+                 把焦点从下面的命令输入框抢走，软键盘随即收起。 -->
             <ScrollView
                 android:id="@+id/term_scroll"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
                 android:background="@color/terminal_bg"
+                android:focusable="false"
+                android:focusableInTouchMode="false"
                 android:scrollbars="none">
 
                 <TextView
