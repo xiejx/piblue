@@ -15,7 +15,8 @@ README 的「快速开始」只给了最短路径。这份文件是它的完整�
 在电脑上（Windows 用 Git Bash / PowerShell 都行）：
 
 ```bash
-cd piblue                     # 换成你自己克隆/解压下来的目录
+git clone https://github.com/xiejx/piblue.git
+cd piblue
 scp -r pi-agent pi@raspberrypi.local:~/
 ssh pi@raspberrypi.local
 ```

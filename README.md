@@ -27,7 +27,9 @@
 需要树莓派 3B+ / 4 / 5，Raspberry Pi OS Bookworm 或 Bullseye，能 SSH 进去。
 
 ```bash
-# 在电脑上（Windows 用 Git Bash），进到仓库目录里：把代码传上去
+# 在电脑上（Windows 用 Git Bash）：克隆仓库，把 agent 传上去
+git clone https://github.com/xiejx/piblue.git
+cd piblue
 scp -r pi-agent pi@raspberrypi.local:~/
 ssh pi@raspberrypi.local
 ```
