@@ -18,7 +18,7 @@ from .protocol import LineDecoder
 
 logger = logging.getLogger("piblue.agent")
 
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 
 #: Answered before the phone has proved it knows the pairing code. ``ping`` is
 #: in the list so a client can check that the link is alive while it is still

@@ -93,6 +93,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # only unmountable when the device is removable, which is what keeps /
         # and /boot out of reach.
         "mount_root": "/mnt",
+        # NTFS stores no POSIX owners, so the kernel driver shows every file as
+        # the uid/gid of whoever mounted the volume - root, because the agent
+        # mounts through sudo. Naming the login user here mounts with
+        # uid=/gid=<user>, which is what makes the stick writable from pi.
+        # Set "" to keep mounted volumes root-owned.
+        "mount_owner": "pi",
         # Up to five one-line commands. The app edits them and the Pi keeps them
         # in custom.json next to this file; `custom` below is only the seed used
         # until the first save. The shell deny list still applies.

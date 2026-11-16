@@ -90,6 +90,16 @@ _NTFS_FSTYPES = frozenset({"ntfs", "ntfs3", "fuseblk"})
 #: is left to mount's own probe.
 _NTFS_DRIVER = "ntfs3"
 
+#: Filesystems that store no POSIX owner, so every file inside is shown with
+#: whatever uid/gid the mount was given. Only NTFS is mounted here, and only
+#: NTFS gets the owner fix; ext4 keeps the owners written on disk.
+_OWNER_FSTYPES = _NTFS_FSTYPES
+
+#: Login user that should own a mounted NTFS volume when the config says
+#: nothing (``control.mount_owner``). ``pi`` is the account on a stock
+#: Raspberry Pi image.
+_DEFAULT_MOUNT_OWNER = "pi"
+
 #: Mount points a phone must never be able to unmount, whatever ``lsblk`` says
 #: about the device. A USB stick is never mounted on these, but one wrong ``rm``
 #: flag in a driver should not be enough to take the root filesystem away.
@@ -1184,6 +1194,66 @@ def mount_driver(fstype: str | None) -> str | None:
     return None
 
 
+def mount_owner(config: dict[str, Any]) -> str:
+    """Login user meant to own a mounted NTFS volume (``control.mount_owner``).
+
+    ``""`` turns the whole thing off, for an image where the mount really is
+    supposed to stay root-owned.
+    """
+    return str(_cfg(config).get("mount_owner", _DEFAULT_MOUNT_OWNER) or "").strip()
+
+
+def _resolve_owner(name: str) -> tuple[str, str] | None:
+    """``(uid, gid)`` for ``name``, or ``None`` when it is not a real account.
+
+    ntfs3 wants numbers - unlike ntfs-3g it has no ``getpwnam`` - so the name
+    is looked up here and passed to mount as ``uid=`` / ``gid=``. The import
+    stays inside the function: ``pwd`` is POSIX-only and this module is also
+    imported by the simulator on Windows.
+    """
+    if not name:
+        return None
+    numeric = name.isdigit()
+    try:
+        import grp
+        import pwd
+    except ImportError:
+        # No account database to read: a bare id is already what mount wants.
+        return (name, name) if numeric else None
+    try:
+        entry = pwd.getpwuid(int(name)) if numeric else pwd.getpwnam(name)
+    except (KeyError, ValueError):
+        if numeric:
+            return (name, name)
+        logger.warning(
+            "control.mount_owner=%r is not a local account; mounting as root", name
+        )
+        return None
+    return (str(entry.pw_uid), str(entry.pw_gid))
+
+
+def mount_options(
+    msg: dict[str, Any], config: dict[str, Any], fstype: str | None
+) -> tuple[list[str], str | None]:
+    """``-o`` options for one mount, plus the owner name they pinned (or None).
+
+    ``ro`` is simply the user's choice. The owner part is not cosmetic: ntfs3
+    (and ntfs-3g) hand every file the uid/gid of the process that mounted, which
+    here is root because the mount goes through sudo - so a stick mounted from
+    the phone is root-owned and the pi user can only read it, even though the
+    mount is read-write. Pinning ``uid=pi,gid=pi`` is what makes it usable.
+    """
+    opts = ["ro"] if msg.get("read_only") else []
+    owner = None
+    if (fstype or "").strip().lower() in _OWNER_FSTYPES:
+        candidate = mount_owner(config)
+        resolved = _resolve_owner(candidate)
+        if resolved:
+            opts += [f"uid={resolved[0]}", f"gid={resolved[1]}"]
+            owner = candidate
+    return opts, owner
+
+
 async def _disk_mount(msg: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     entry = _find_device(config, msg.get("device"))
     root = mount_root(config)
@@ -1233,13 +1303,14 @@ async def _disk_mount(msg: dict[str, Any], config: dict[str, Any]) -> dict[str, 
         raise ControlRejected(f"无法创建挂载点 {target}：{exc.message}") from None
 
     driver = mount_driver(entry.get("fstype"))
-    opts = ["-o", "ro"] if msg.get("read_only") else []
+    opts, owner = mount_options(msg, config, entry.get("fstype"))
+    o_argv = ["-o", ",".join(opts)] if opts else []
 
     def argv_for(kind: str | None) -> list[str]:
         argv = [*_prefix(), "mount"]
         if kind:
             argv += ["-t", kind]
-        return [*argv, *opts, entry["path"], target]
+        return [*argv, *o_argv, entry["path"], target]
 
     code, out, err = await _run(argv_for(driver), timeout=25.0)
     detail = (err or out or "").strip()
@@ -1270,9 +1341,11 @@ async def _disk_mount(msg: dict[str, Any], config: dict[str, Any]) -> dict[str, 
         "mountpoint": target,
         "fstype": entry["fstype"],
         "driver": used_driver,
+        "owner": owner,
         "read_only": bool(msg.get("read_only")),
         "message": f"{entry['path']} 已挂载到 {target}"
         + (f"（{used_driver}）" if used_driver else "")
+        + (f"，属主 {owner}" if owner else "")
         + ("，只读" if msg.get("read_only") else ""),
     }
 

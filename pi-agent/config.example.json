@@ -50,6 +50,7 @@
       "custom-save"
     ],
     "mount_root": "/mnt",
+    "mount_owner": "pi",
     "custom": [],
     "custom_timeout_s": 20,
     "allow_custom_edit": true,

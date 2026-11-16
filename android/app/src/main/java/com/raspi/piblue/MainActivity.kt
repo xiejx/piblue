@@ -1040,7 +1040,13 @@ class MainActivity : Activity(), PiController.Listener {
         }
 
         val fs = disk.fstype?.trim()?.lowercase(Locale.ROOT)
-        val driver = if (disk.ntfs) "$fs 分区，挂载时指定 ntfs3 驱动。" else "${fs ?: "未知"} 分区。"
+        val driver = if (disk.ntfs) {
+            // NTFS 没有 POSIX 属主，不钉 uid/gid 的话挂上去整卷都是 root 的，
+            // pi 只能读 —— 树莓派那边会按 control.mount_owner 自己补上。
+            "$fs 分区，挂载时指定 ntfs3 驱动，并把卷属主设成 pi。"
+        } else {
+            "${fs ?: "未知"} 分区。"
+        }
         val dialog = AlertDialog.Builder(this)
             .setTitle("挂载 ${disk.path}")
             .setMessage(

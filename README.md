@@ -174,7 +174,7 @@ piblue/
 
 ## 版本
 
-App 1.3.3（versionCode 8）/ agent 协议 1.3.2。当前状态与未验证项见 [docs/status.md](docs/status.md)。
+App 1.3.3（versionCode 8）/ agent 协议 1.3.3。当前状态与未验证项见 [docs/status.md](docs/status.md)。
 
 ---
 
