@@ -175,6 +175,7 @@ sudo ./scripts/doctor.sh
       "disk-list", "disk-mount", "disk-unmount", "custom", "custom-save"
     ],
     "mount_root": "/mnt",
+    "mount_owner": "pi",
     "custom": [],
     "custom_timeout_s": 20,
     "allow_custom_edit": true,
@@ -194,7 +195,7 @@ sudo ./scripts/doctor.sh
 * `shell.allow_any = true` 等于把 root shell 交给手机，只在完全私人的环境里开。
 * `shell.allow_meta = false` 会拦 `; | & > < $ \``，所以 `ps aux | grep x` 默认跑不了。想放开就改 `true`。
 * `control.allow` 是**控制页的按钮清单**：删掉一行，App 里那个按钮就消失。比如不想让任何人远程关机，把 `"shutdown"` 去掉即可 —— 注意这是唯一的地方，没有第二个隐藏开关。
-* `sensors` / `disk` 的用法见下面的传感器扩展。控制页相关字段（`mount_root`、`custom*`）见 [control.md](control.md)。
+* `sensors` / `disk` 的用法见下面的传感器扩展。控制页相关字段（`mount_root`、`mount_owner`、`custom*`）见 [control.md](control.md)。`mount_owner` 是 NTFS 挂载时的属主账号（默认 `pi`），换成别的账号名或 `""`（保持 root 属主）都行。
 
 ### 三种"命令"配置，别搞混
 

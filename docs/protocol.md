@@ -177,7 +177,7 @@ GATT 服务是公开的：BLE 广播挡不住任何人连上来（能挡住的�
 | `wifi-connect` | `ssid`，可选 `password` | 树莓派已有该 SSID 的 profile 且没给密码 → 直接激活，用存档里的密码；否则显式写一份带 `key-mgmt` 的 profile 再激活（不是 `nmcli dev wifi connect`）。没有 nmcli 时走 `wpa_cli` |
 | `wifi-disconnect` | — | 断开当前网络 |
 | `disk-list` | — | `lsblk -J` 的可挂载分区 |
-| `disk-mount` | `device`（必须来自 `disk-list`），可选 `name`、`read_only` | 挂到 `control.mount_root/<name>`；`name` 会被校验成**单个路径段**（字母数字开头，`[A-Za-z0-9._-]{0,31}`），目录不存在则 `mkdir -p`，已存在且非空则拒绝。不带 `name` 时退回用 label 当目录名。**NTFS 显式用 `mount -t ntfs3`**（`ntfs`/`ntfs3`/`fuseblk` 都算），内核没有 ntfs3 时自动退回不带 `-t` 的探测（即 ntfs-3g）；其他文件系统一律不指定 `-t` |
+| `disk-mount` | `device`（必须来自 `disk-list`），可选 `name`、`read_only` | 挂到 `control.mount_root/<name>`；`name` 会被校验成**单个路径段**（字母数字开头，`[A-Za-z0-9._-]{0,31}`），目录不存在则 `mkdir -p`，已存在且非空则拒绝。不带 `name` 时退回用 label 当目录名。**NTFS 显式用 `mount -t ntfs3`**（`ntfs`/`ntfs3`/`fuseblk` 都算）并加 `-o uid=<uid>,gid=<gid>`（按 `control.mount_owner`，默认 `pi`，查 passwd/group 换成数字；查不到就不加），内核没有 ntfs3 时自动退回不带 `-t` 的探测（即 ntfs-3g）；其他文件系统一律不指定 `-t`、也不改属主。回包里多一个 `owner` 字段（实际钉上的账号名，没钉则为 `null`） |
 | `disk-unmount` | `device` | 只允许卸载 `mount_root` 下的挂载，以及**可移动设备**的挂载（桌面自动挂到 `/media/pi/…` 的 U 盘也能安全弹出）；`/`、`/boot`、`/usr` 等关键挂载点一律拒绝 |
 | `custom` | `index`（0-4） | 触发第 index 条命令，正文在树莓派上 |
 | `custom-save` | `items: [{"name","line"}]`（≤5） | **整表替换**，写入 `custom.json`（与 `config.json` 同目录，原子写、0644）。保存前用执行时的同一套规则预检，写不进去的命令当场拒绝 |

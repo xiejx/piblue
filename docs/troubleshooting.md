@@ -69,6 +69,7 @@ sudo ./scripts/doctor.sh
 | 挂载报 `unknown filesystem type` | 系统没装这种文件系统的驱动：`sudo apt install exfat-fuse ntfs-3g` |
 | **NTFS 挂载报 `unknown filesystem type 'ntfs3'`** | 内核没有 ntfs3 模块（5.15 以下，或 `CONFIG_NTFS3_FS` 没开）。新版会自动退回不带 `-t` 的挂载（`ntfs-3g`），如果连它也没装：`sudo apt install ntfs-3g` |
 | **NTFS 挂载报 `Volume is dirty`** | Windows 没正常关机/休眠。勾上对话框里的「只读挂载」先把文件读出来，回 Windows 跑 `chkdsk /f` 之后再读写挂 |
+| **NTFS 挂上了，但 `pi` 写不进去（`Permission denied`）** | NTFS 没有 POSIX 属主，驱动默认把整个卷显示成「挂载它的进程」——即 `sudo mount` 的 root。新版挂载时会带 `-o uid=<uid>,gid=<gid>`，账号取自 `control.mount_owner`（默认 `pi`）。还写不进去就依次查：`grep -n mount_owner /etc/piblue/config.json` 有没有被设成 `""`；`id pi` 在不在（没有 `pi` 账号的镜像会退回 root 挂载，`journalctl -u piblue -n 20` 里有一条 warning）；`findmnt -no OPTIONS /mnt/<名字>` 看实际生效的 uid/gid。老版本挂的卷改不了，卸载重挂即可 |
 | **插了 U 盘，磁盘卡片里看不到它** | 先点「刷新」（卡片不会自己轮询）。还是没有就看 `lsblk -o NAME,PATH,TYPE,FSTYPE,LABEL,MOUNTPOINT,RM`：整盘没分区表（superfloppy）也能挂，会显示成 `未识别到文件系统`；`swap`/`crypto_LUKS`/`LVM2_member` 以及 `mmcblk0boot0`、`loop*` 这类伪设备是刻意过滤掉的 |
 | **磁盘列表里只有"已挂载"，没有「挂载」按钮** | 两种情况：① 分区已经被桌面自动挂到 `/media/pi/…` 了 —— 这时该行给的是「卸载」，卸掉之后同一行就会变成「`exfat` 未挂载」并出现「挂载」，挂到 `/mnt/<你填的名字>`；② 分区的 `FSTYPE` 是空的（没格式化），没有任何东西可挂。控制页现在会把 Pi 返回的每一条都列出来，所以不会再出现"明明有盘却一片空白" |
 | 想卸载 `/media/pi/xxx` 却被拒 | 现在的规则是：`control.mount_root`（默认 `/mnt`）下的挂载、以及**可移动设备**的挂载可以卸；`/`、`/boot`、`/boot/firmware`、`/usr`、`/var` 等关键挂载点一律拒绝，哪怕 `lsblk` 的 `RM` 位标错了 |

@@ -17,6 +17,7 @@
   * `allowed()` 对**旧配置**（`allow` 里只有 `custom`）也发放 `custom-save`，`allow_custom_edit=false` 时收回；
   * `_can_unmount` 换成路径段前缀匹配后重跑矩阵：`/`、`/boot/firmware`、`/mntfoo` 拒；`/media/pi/USB`、`/mnt/usb` 放行；
   * 模拟器端到端：`status`（空列表时只给 `custom-save`）→ `custom-save` → `status`（出现 `custom`）→ `custom` 执行 → 拒绝路径。
+* NTFS 属主（`control.mount_owner`，默认 `pi`，工作区改动、未发版）在开发机上验证过：`mount_options` 的四种组合（ntfs 读写 → `['uid=1000','gid=1000']`、ntfs 只读 → `['ro','uid=..','gid=..']`、ext4 → 空、`mount_owner:""` → 空）；`_resolve_owner` 的退化路径（没有 `pwd` 的 Windows 上非数字返回 `None`、纯数字 `1000` 直接当 uid/gid 用）；用假 runner + 假 `lsblk` 干跑 `_disk_mount`，argv 为 `mount -t ntfs3 -o uid=1000,gid=1000 /dev/sda1 /mnt/usb`、只读为 `-o ro,uid=1000,gid=1000`，ext4 仍是不带 `-t` 的老 argv，回包带 `owner`。**没验证的是**真机上的 `pwd.getpwnam("pi")` 结果，以及挂上去之后 `pi` 是否真的能写（要在 `findmnt -no OPTIONS` 里看到 uid/gid 才算数）。
 * agent 1.3.2 修的是状态页 Wi-Fi 后面永远显示 `0/70`：`iwgetid` **没有** `--signal` 选项，那条命令一直退 1，`signal` 恒为 `null`，被 App 的 `?: 0` 印成 `0`。现在读 `/proc/net/wireless` 的 link quality 列，用一台真机（`xqx688`，`wlan0: 0000   61.  -49.  ...`）的原始输出核对过解析结果为 `{'ssid': 'xqx688', 'signal': 61}`，空表头/驱动填 0 两种退化输入也跑过。**没验证的是**：把新代码装到 `/opt/piblue` 之后服务进程的实际返回值。排查过程见 [troubleshooting.md](troubleshooting.md) 的「状态页与传感器」。
 * `bless` 与 BlueZ 的实际广播行为依赖具体系统版本；`scripts/doctor.sh` 会在装完后给出明确结论。
 

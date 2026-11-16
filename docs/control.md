@@ -13,7 +13,7 @@
 | 电源 | `reboot` / `shutdown` | `systemctl --no-block reboot\|poweroff`，默认延迟 2 秒，先把回包发出去 |
 | 服务 | `restart-agent` / `restart-bluetooth` | 用 `systemd-run --on-active=2s` 排在自身 cgroup 之外重启，否则服务会把自己杀掉、回包发不出去 |
 | Wi-Fi | `wifi-enable` `wifi-disable` `wifi-scan` `wifi-connect` `wifi-disconnect` | 优先 `nmcli`（Bookworm 默认），没有就用 `wpa_cli`（Bullseye 及更早）；开关同时用 `rfkill` 兜底 |
-| 磁盘 | `disk-list` `disk-mount` `disk-unmount` | `lsblk -J` 列分区（未挂载的也列，带「挂载」按钮），每行带**文件系统类型**（`ext4`/`ntfs`/`vfat`…）。点「挂载」时自己填目录名，挂到 `control.mount_root/<名字>`，目录不存在会自动建；**NTFS 用 `mount -t ntfs3`**，其他类型交给 `mount` 自己探测。卸载允许两类：这个目录下的挂载，以及**可移动设备**的挂载（`/media/pi/…` 的 U 盘能安全弹出）；`/`、`/boot`、`/usr` 等关键挂载点一律拒绝 |
+| 磁盘 | `disk-list` `disk-mount` `disk-unmount` | `lsblk -J` 列分区（未挂载的也列，带「挂载」按钮），每行带**文件系统类型**（`ext4`/`ntfs`/`vfat`…）。点「挂载」时自己填目录名，挂到 `control.mount_root/<名字>`，目录不存在会自动建；**NTFS 用 `mount -t ntfs3`** 并把属主钉成 `control.mount_owner`（默认 `pi`），其他类型交给 `mount` 自己探测。卸载允许两类：这个目录下的挂载，以及**可移动设备**的挂载（`/media/pi/…` 的 U 盘能安全弹出）；`/`、`/boot`、`/usr` 等关键挂载点一律拒绝 |
 | 自定义 | `custom` + `index`，`custom-save` + `items` | 执行第 index 条命令；在 App 里增删改（最多 5 条），保存时整表替换 |
 
 ---
@@ -29,6 +29,8 @@
 * 挂好之后，同一行变成「卸载」，因为 `mount_root` 下的挂载本来就允许卸。
 * **文件系统类型在列表里直接显示**（`ext4`、`ntfs`、`vfat`、`exfat`…），挂载对话框也会写一句用哪个驱动。
 * **NTFS 显式用 `ntfs3`**：`mount` 在 NTFS 上默认走用户态 `ntfs-3g`，慢，而且精简镜像里常常没装；点名 `ntfs3` 用的是内核驱动（5.15 起内置，Bookworm 就有）。内核没有 ntfs3 时（Bullseye 的 5.10）会自动退回不带 `-t` 的探测，也就是 `ntfs-3g`，所以老系统照样能挂，只是没有加速。
+* **NTFS 顺带把属主钉成 `pi`**（`uid=pi,gid=pi`，实际传的是数字 uid/gid）。NTFS 盘上没有 POSIX 属主，内核驱动默认把卷里每个文件都显示成「挂载它的那个进程」——而这里是 `sudo mount`，也就是 root。结果就是盘明明是读写挂的，`pi` 却只能读。所以挂载时加上 `-o uid=1000,gid=1000`（按 `control.mount_owner` 查 passwd/group 得到），`pi` 才能正常写。名字查不到（比如你的镜像里没有 `pi` 这个账号）时只记一条 warning、退回 root 挂载，不会因此挂载失败。
+  想换成别的账号就改 `control.mount_owner`；设成 `""` 则完全不加这两个选项，卷保持 root 属主。`ext4` 这类**盘上有属主**的文件系统不加这两个选项——那会把整盘文件的属主改写成挂载选项里的那个人。
 * 其他文件系统**不指定** `-t`：ext4、vfat、exfat 由 `mount` 自己按 superblock 判断，写死反而多一条出错的路。
 * Windows 没正常关机时 NTFS 卷会被标记为脏，读写挂载会被拒；对话框里的「只读挂载」就是给这种情况用的，先把文件读出来，再回 Windows 跑一次 `chkdsk`。
 
